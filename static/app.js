@@ -217,18 +217,38 @@ function makeMarker(device, point) {
 
 function showPointPopup(device, point) {
   const dt = new Date(point.timestamp * 1000);
-  const lines = [
-    `<strong>${device.name || device.id}</strong>`,
-    `<span class="popup-time">${dt.toLocaleString()}</span>`,
-    `Lat: ${point.lat.toFixed(6)}`,
-    `Lng: ${point.lng.toFixed(6)}`,
-  ];
-  if (point.accuracy != null) lines.push(`Accuracy: ±${point.accuracy}m`);
-  if (point.confidence != null) lines.push(`Confidence: ${point.confidence}`);
-  if (point.raw_count > 1) lines.push(`(avg of ${point.raw_count} reports)`);
 
-  document.getElementById("popup-content").innerHTML = lines.join("<br>");
-  document.getElementById("popup").classList.remove("hidden");
+  if (isMobile()) {
+    // Show in the sheet's fixed header
+    const metaParts = [
+      `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`,
+    ];
+    if (point.accuracy != null) metaParts.push(`±${Math.round(point.accuracy)}m`);
+    if (point.raw_count > 1)    metaParts.push(`avg ${point.raw_count}pts`);
+
+    document.getElementById("sheet-point-device").textContent = device.name || device.id;
+    document.getElementById("sheet-point-device").style.color = device.color;
+    document.getElementById("sheet-point-time").textContent   = dt.toLocaleString();
+    document.getElementById("sheet-point-meta").textContent   = metaParts.join("  ·  ");
+    document.getElementById("sheet-point-info").classList.remove("hidden");
+
+    // Ensure sheet is visible enough to show the header
+    expandSheetIfPeeked();
+  } else {
+    // Desktop: floating popup
+    const lines = [
+      `<strong>${device.name || device.id}</strong>`,
+      `<span class="popup-time">${dt.toLocaleString()}</span>`,
+      `Lat: ${point.lat.toFixed(6)}`,
+      `Lng: ${point.lng.toFixed(6)}`,
+    ];
+    if (point.accuracy   != null) lines.push(`Accuracy: ±${point.accuracy}m`);
+    if (point.confidence != null) lines.push(`Confidence: ${point.confidence}`);
+    if (point.raw_count  >  1)    lines.push(`(avg of ${point.raw_count} reports)`);
+
+    document.getElementById("popup-content").innerHTML = lines.join("<br>");
+    document.getElementById("popup").classList.remove("hidden");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -571,10 +591,14 @@ document.getElementById("btn-poll").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("popup-close").addEventListener("click", () => {
+function dismissPointInfo() {
   document.getElementById("popup").classList.add("hidden");
-});
-map.on("click", () => document.getElementById("popup").classList.add("hidden"));
+  document.getElementById("sheet-point-info").classList.add("hidden");
+}
+
+document.getElementById("popup-close").addEventListener("click", dismissPointInfo);
+document.getElementById("sheet-point-close").addEventListener("click", dismissPointInfo);
+map.on("click", dismissPointInfo);
 
 // ---------------------------------------------------------------------------
 // Init
