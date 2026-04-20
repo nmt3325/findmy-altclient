@@ -564,9 +564,16 @@ document.getElementById("btn-apply").addEventListener("click", async () => {
 
 document.querySelectorAll(".preset-btn").forEach(btn => {
   btn.addEventListener("click", async () => {
-    const hours = Number(btn.dataset.hours);
-    rangeEnd = new Date();
-    rangeStart = new Date(rangeEnd.getTime() - hours * 3600 * 1000);
+    const now = new Date();
+    if (btn.dataset.days) {
+      const days = Number(btn.dataset.days);
+      rangeEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 0);
+      rangeStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days, 0, 0, 0);
+    } else {
+      const hours = Number(btn.dataset.hours);
+      rangeEnd   = now;
+      rangeStart = new Date(now.getTime() - hours * 3600 * 1000);
+    }
     document.getElementById("range-start").value = tsToInputValue(rangeStart);
     document.getElementById("range-end").value   = tsToInputValue(rangeEnd);
     await renderAll();
@@ -619,9 +626,8 @@ map.on("click", dismissPointInfo);
 
 (async function init() {
   const now = new Date();
-  const dayAgo = new Date(now.getTime() - 24 * 3600 * 1000);
-  rangeStart = dayAgo;
-  rangeEnd   = now;
+  rangeStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  rangeEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 0);
   document.getElementById("range-start").value = tsToInputValue(rangeStart);
   document.getElementById("range-end").value   = tsToInputValue(rangeEnd);
 
