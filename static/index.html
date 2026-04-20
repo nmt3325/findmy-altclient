@@ -14,46 +14,60 @@
 <body>
 
 <div id="sidebar">
-  <div id="sidebar-header">
-    <h1>FindMy Tracker</h1>
-    <div id="poll-status" class="status-badge idle">Idle</div>
+
+  <!-- Mobile-only drag handle (hidden on desktop) -->
+  <div id="sheet-handle">
+    <div id="sheet-handle-pill"></div>
+    <div id="sheet-mini-status">
+      <span id="sheet-mini-title">FindMy Tracker</span>
+      <span id="poll-status-mini" class="status-badge idle">Idle</span>
+    </div>
   </div>
 
-  <!-- Time range -->
-  <section class="sidebar-section">
-    <h2>Time Range</h2>
-    <div class="range-row">
-      <label>From</label>
-      <input type="datetime-local" id="range-start" />
+  <!-- Scrollable content area -->
+  <div id="sheet-body">
+    <div id="sidebar-header">
+      <h1>FindMy Tracker</h1>
+      <div id="poll-status" class="status-badge idle">Idle</div>
     </div>
-    <div class="range-row">
-      <label>To</label>
-      <input type="datetime-local" id="range-end" />
-    </div>
-    <div class="range-presets">
-      <button class="preset-btn" data-hours="1">1h</button>
-      <button class="preset-btn" data-hours="6">6h</button>
-      <button class="preset-btn" data-hours="24">24h</button>
-      <button class="preset-btn" data-hours="72">3d</button>
-      <button class="preset-btn" data-hours="168">7d</button>
-      <button class="preset-btn" data-hours="720">30d</button>
-    </div>
-    <button id="btn-apply" class="btn-primary">Apply</button>
-  </section>
 
-  <!-- Devices -->
-  <section class="sidebar-section">
-    <h2>Devices</h2>
-    <div id="device-list"></div>
-    <button id="btn-poll" class="btn-secondary">Poll Now</button>
-  </section>
+    <!-- Time range -->
+    <section class="sidebar-section">
+      <h2>Time Range</h2>
+      <div class="range-row">
+        <label>From</label>
+        <input type="datetime-local" id="range-start" />
+      </div>
+      <div class="range-row">
+        <label>To</label>
+        <input type="datetime-local" id="range-end" />
+      </div>
+      <div class="range-presets">
+        <button class="preset-btn" data-hours="1">1h</button>
+        <button class="preset-btn" data-hours="6">6h</button>
+        <button class="preset-btn" data-hours="24">24h</button>
+        <button class="preset-btn" data-hours="72">3d</button>
+        <button class="preset-btn" data-hours="168">7d</button>
+        <button class="preset-btn" data-hours="720">30d</button>
+      </div>
+      <button id="btn-apply" class="btn-primary">Apply</button>
+    </section>
 
-  <!-- Stats -->
-  <section class="sidebar-section" id="stats-section">
-    <h2>Stats</h2>
-    <div id="stats-content" class="stats-grid"></div>
-  </section>
-</div>
+    <!-- Devices -->
+    <section class="sidebar-section">
+      <h2>Devices</h2>
+      <div id="device-list"></div>
+      <button id="btn-poll" class="btn-secondary">Poll Now</button>
+    </section>
+
+    <!-- Stats -->
+    <section class="sidebar-section" id="stats-section">
+      <h2>Stats</h2>
+      <div id="stats-content" class="stats-grid"></div>
+    </section>
+  </div><!-- #sheet-body -->
+
+</div><!-- #sidebar -->
 
 <div id="map"></div>
 

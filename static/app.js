@@ -65,6 +65,67 @@ let rangeEnd   = null;
 let expandedDeviceId = null;
 
 // ---------------------------------------------------------------------------
+// Bottom sheet (mobile only)
+// ---------------------------------------------------------------------------
+
+const SHEET_PEEK_H = 52;
+const sheetEl = document.getElementById("sidebar");
+const sheetHandle = document.getElementById("sheet-handle");
+
+function isMobile() { return window.innerWidth <= 600; }
+function sheetHalfH() { return Math.round(window.innerHeight * 0.52); }
+function sheetFullH() { return Math.round(window.innerHeight * 0.88); }
+
+function setSheetHeight(px, animated = true) {
+  if (!animated) sheetEl.style.transition = "none";
+  sheetEl.style.height = px + "px";
+  if (!animated) requestAnimationFrame(() => { sheetEl.style.transition = ""; });
+}
+
+function snapSheet(h) {
+  const states = [SHEET_PEEK_H, sheetHalfH(), sheetFullH()];
+  const nearest = states.reduce((a, b) => Math.abs(a - h) < Math.abs(b - h) ? a : b);
+  setSheetHeight(nearest);
+}
+
+function expandSheetIfPeeked() {
+  if (isMobile() && sheetEl.getBoundingClientRect().height <= SHEET_PEEK_H + 8) {
+    setSheetHeight(sheetHalfH());
+  }
+}
+
+let _touchStartY = 0, _touchStartH = 0, _isDragging = false;
+
+sheetHandle.addEventListener("touchstart", e => {
+  if (!isMobile()) return;
+  _touchStartY = e.touches[0].clientY;
+  _touchStartH = sheetEl.getBoundingClientRect().height;
+  _isDragging = true;
+  sheetEl.style.transition = "none";
+}, { passive: true });
+
+document.addEventListener("touchmove", e => {
+  if (!isMobile() || !_isDragging) return;
+  const dy = _touchStartY - e.touches[0].clientY;
+  const newH = Math.max(SHEET_PEEK_H, Math.min(sheetFullH(), _touchStartH + dy));
+  sheetEl.style.height = newH + "px";
+}, { passive: true });
+
+document.addEventListener("touchend", () => {
+  if (!isMobile() || !_isDragging) return;
+  _isDragging = false;
+  sheetEl.style.transition = "";
+  snapSheet(sheetEl.getBoundingClientRect().height);
+});
+
+// Tap handle: toggle peek ↔ half
+sheetHandle.addEventListener("click", () => {
+  if (!isMobile()) return;
+  const h = sheetEl.getBoundingClientRect().height;
+  setSheetHeight(h <= SHEET_PEEK_H + 8 ? sheetHalfH() : SHEET_PEEK_H);
+});
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -296,6 +357,9 @@ function toggleDeviceHistory(device, headerEl) {
     panel.style.maxHeight = panel.scrollHeight + "px";
     arrow.classList.add("open");
 
+    // Auto-expand sheet on mobile so history list is visible
+    expandSheetIfPeeked();
+
     // Zoom map to latest point
     const points = deviceLayers[device.id]?.points ?? [];
     if (points.length > 0) {
@@ -416,9 +480,12 @@ async function updateStats() {
     <div class="stat"><span>Next poll</span><strong>~${s.poll_interval_seconds / 60} min interval</strong></div>
   `;
 
+  const label = s.poll_status === "polling" ? "Polling…" : s.account_configured ? "Idle" : "No account";
+  const cls   = "status-badge " + (s.poll_status === "polling" ? "polling" : s.account_configured ? "idle" : "warn");
   const badge = document.getElementById("poll-status");
-  badge.textContent = s.poll_status === "polling" ? "Polling…" : s.account_configured ? "Idle" : "No account";
-  badge.className = "status-badge " + (s.poll_status === "polling" ? "polling" : s.account_configured ? "idle" : "warn");
+  badge.textContent = label; badge.className = cls;
+  const miniBadge = document.getElementById("poll-status-mini");
+  if (miniBadge) { miniBadge.textContent = label; miniBadge.className = cls; }
 }
 
 // ---------------------------------------------------------------------------
