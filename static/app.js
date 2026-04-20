@@ -126,6 +126,38 @@ sheetHandle.addEventListener("click", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Map navigation helpers (sheet-aware)
+// ---------------------------------------------------------------------------
+
+// Returns how many px the bottom sheet currently covers (0 on desktop).
+function sheetCoveredPx() {
+  return isMobile() ? sheetEl.getBoundingClientRect().height : 0;
+}
+
+// flyTo a latlng but offset the map center so the point lands in the
+// center of the visible area above the bottom sheet.
+function flyToVisible(latlng, zoom, duration = 1.2) {
+  const targetZoom = zoom ?? map.getZoom();
+  const offset = sheetCoveredPx() / 2; // pixels to shift map center south
+  if (offset > 0) {
+    const px = map.project(latlng, targetZoom);
+    const adjusted = map.unproject(L.point(px.x, px.y + offset), targetZoom);
+    map.flyTo(adjusted, targetZoom, { duration });
+  } else {
+    map.flyTo(latlng, targetZoom, { duration });
+  }
+}
+
+// fitBounds but add bottom padding equal to the sheet height.
+function fitBoundsVisible(bounds) {
+  const sheetH = sheetCoveredPx();
+  map.fitBounds(bounds, {
+    paddingTopLeft:    [16, 16],
+    paddingBottomRight:[16, sheetH + 16],
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -282,7 +314,7 @@ async function renderAll() {
     .map(d => deviceLayers[d.id].polyline);
   if (visibleLayers.length > 0) {
     const group = L.featureGroup(visibleLayers);
-    map.fitBounds(group.getBounds().pad(0.1));
+    fitBoundsVisible(group.getBounds());
   }
 }
 
@@ -325,7 +357,7 @@ function renderHistoryItems(panel, device) {
     }
 
     item.addEventListener("click", () => {
-      map.flyTo([point.lat, point.lng], 17, { duration: 1.0 });
+      flyToVisible([point.lat, point.lng], 17, 1.0);
       showPointPopup(device, point);
     });
 
@@ -364,7 +396,7 @@ function toggleDeviceHistory(device, headerEl) {
     const points = deviceLayers[device.id]?.points ?? [];
     if (points.length > 0) {
       const latest = points[points.length - 1];
-      map.flyTo([latest.lat, latest.lng], 16, { duration: 1.2 });
+      flyToVisible([latest.lat, latest.lng], 16, 1.2);
     }
   }
 }
