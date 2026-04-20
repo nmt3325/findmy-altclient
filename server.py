@@ -177,9 +177,10 @@ def _do_poll() -> dict[str, Any]:
         return {"ok": True, "message": "No devices registered. Add device files to the devices/ folder."}
 
     try:
+        # from_json reads the anisette provider type stored in the JSON,
+        # so it works for both local and remote providers transparently.
         acc = AppleAccount.from_json(
             str(ACCOUNT_PATH),
-            anisette_server=ANISETTE_SERVER,
             anisette_libs_path=str(ANISETTE_LIBS_PATH),
         )
     except Exception as e:
