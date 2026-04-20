@@ -18,20 +18,22 @@
   <!-- Mobile-only drag handle (hidden on desktop) -->
   <div id="sheet-handle">
     <div id="sheet-handle-pill"></div>
-    <div id="sheet-mini-status">
+
+    <!-- Default: app title + poll status -->
+    <div id="sheet-mini-default">
       <span id="sheet-mini-title">FindMy Tracker</span>
       <span id="poll-status-mini" class="status-badge idle">Idle</span>
     </div>
-  </div>
 
-  <!-- Mobile-only: fixed point info header shown when a map point is tapped -->
-  <div id="sheet-point-info" class="hidden">
-    <div id="sheet-point-body">
-      <div id="sheet-point-device"></div>
-      <div id="sheet-point-time"></div>
-      <div id="sheet-point-meta"></div>
+    <!-- Point selected: always-visible point info -->
+    <div id="sheet-mini-point" class="hidden">
+      <div class="smp-row1">
+        <span id="smp-device"></span>
+        <button id="sheet-point-close" aria-label="Close">✕</button>
+      </div>
+      <div id="smp-time"></div>
+      <div id="smp-meta"></div>
     </div>
-    <button id="sheet-point-close" aria-label="Close">✕</button>
   </div>
 
   <!-- Scrollable content area -->

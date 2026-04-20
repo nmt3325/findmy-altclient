@@ -374,8 +374,8 @@ body {
 #sidebar::-webkit-scrollbar-track { background: transparent; }
 #sidebar::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 2px; }
 
-/* ─── Sheet point info (mobile fixed header, desktop hidden) ────────────── */
-#sheet-point-info { display: none; }
+/* ─── Sheet mini point (inside handle, desktop hidden) ─────────────────── */
+#sheet-mini-point { display: none; }
 
 /* ─── Mobile: Bottom Sheet ──────────────────────────────────────────────── */
 @media (max-width: 600px) {
@@ -447,42 +447,38 @@ body {
     flex: 1;
   }
 
-  /* Point info fixed header */
-  #sheet-point-info {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 10px 14px 10px 16px;
-    background: #0d2040;
-    border-bottom: 1px solid #1a4a8a;
-    flex-shrink: 0;
-  }
-  #sheet-point-info.hidden { display: none; }
-
-  #sheet-point-body {
-    flex: 1;
-    min-width: 0;
+  /* Point info in the always-visible handle area */
+  #sheet-mini-point {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    width: 100%;
+  }
+  #sheet-mini-point.hidden { display: none; }
+
+  .smp-row1 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
 
-  #sheet-point-device {
-    font-size: 12px;
+  #smp-device {
+    font-size: 13px;
     font-weight: 700;
-    color: #e0e0e0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
   }
 
-  #sheet-point-time {
+  #smp-time {
     font-size: 13px;
     font-weight: 600;
     color: #7fb3f5;
   }
 
-  #sheet-point-meta {
+  #smp-meta {
     font-size: 11px;
     color: #889;
     white-space: nowrap;
@@ -499,7 +495,6 @@ body {
     padding: 0 2px;
     flex-shrink: 0;
     line-height: 1;
-    align-self: center;
   }
   #sheet-point-close:hover { color: #aac8f0; }
 

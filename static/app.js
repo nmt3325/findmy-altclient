@@ -68,13 +68,17 @@ let expandedDeviceId = null;
 // Bottom sheet (mobile only)
 // ---------------------------------------------------------------------------
 
-const SHEET_PEEK_H = 52;
-const sheetEl = document.getElementById("sidebar");
+const SHEET_PEEK_H       = 52;   // default peek: pill + title row
+const SHEET_POINT_PEEK_H = 104;  // point-selected peek: pill + 3 info rows
+const sheetEl     = document.getElementById("sidebar");
 const sheetHandle = document.getElementById("sheet-handle");
+
+let _pointInfoVisible = false;
 
 function isMobile() { return window.innerWidth <= 600; }
 function sheetHalfH() { return Math.round(window.innerHeight * 0.52); }
 function sheetFullH() { return Math.round(window.innerHeight * 0.88); }
+function currentPeekH() { return _pointInfoVisible ? SHEET_POINT_PEEK_H : SHEET_PEEK_H; }
 
 function setSheetHeight(px, animated = true) {
   if (!animated) sheetEl.style.transition = "none";
@@ -83,13 +87,13 @@ function setSheetHeight(px, animated = true) {
 }
 
 function snapSheet(h) {
-  const states = [SHEET_PEEK_H, sheetHalfH(), sheetFullH()];
+  const states = [currentPeekH(), sheetHalfH(), sheetFullH()];
   const nearest = states.reduce((a, b) => Math.abs(a - h) < Math.abs(b - h) ? a : b);
   setSheetHeight(nearest);
 }
 
 function expandSheetIfPeeked() {
-  if (isMobile() && sheetEl.getBoundingClientRect().height <= SHEET_PEEK_H + 8) {
+  if (isMobile() && sheetEl.getBoundingClientRect().height <= currentPeekH() + 8) {
     setSheetHeight(sheetHalfH());
   }
 }
@@ -122,7 +126,7 @@ document.addEventListener("touchend", () => {
 sheetHandle.addEventListener("click", () => {
   if (!isMobile()) return;
   const h = sheetEl.getBoundingClientRect().height;
-  setSheetHeight(h <= SHEET_PEEK_H + 8 ? sheetHalfH() : SHEET_PEEK_H);
+  setSheetHeight(h <= currentPeekH() + 8 ? sheetHalfH() : currentPeekH());
 });
 
 // ---------------------------------------------------------------------------
@@ -219,21 +223,22 @@ function showPointPopup(device, point) {
   const dt = new Date(point.timestamp * 1000);
 
   if (isMobile()) {
-    // Show in the sheet's fixed header
-    const metaParts = [
-      `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`,
-    ];
+    // Show in the always-visible handle area
+    const metaParts = [`${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`];
     if (point.accuracy != null) metaParts.push(`±${Math.round(point.accuracy)}m`);
     if (point.raw_count > 1)    metaParts.push(`avg ${point.raw_count}pts`);
 
-    document.getElementById("sheet-point-device").textContent = device.name || device.id;
-    document.getElementById("sheet-point-device").style.color = device.color;
-    document.getElementById("sheet-point-time").textContent   = dt.toLocaleString();
-    document.getElementById("sheet-point-meta").textContent   = metaParts.join("  ·  ");
-    document.getElementById("sheet-point-info").classList.remove("hidden");
+    document.getElementById("smp-device").textContent   = device.name || device.id;
+    document.getElementById("smp-device").style.color   = device.color;
+    document.getElementById("smp-time").textContent     = dt.toLocaleString();
+    document.getElementById("smp-meta").textContent     = metaParts.join("  ·  ");
+    document.getElementById("sheet-mini-point").classList.remove("hidden");
+    document.getElementById("sheet-mini-default").classList.add("hidden");
 
-    // Ensure sheet is visible enough to show the header
-    expandSheetIfPeeked();
+    _pointInfoVisible = true;
+    // Expand to point-peek height if currently at default peek
+    const curH = sheetEl.getBoundingClientRect().height;
+    if (curH <= SHEET_PEEK_H + 8) setSheetHeight(SHEET_POINT_PEEK_H);
   } else {
     // Desktop: floating popup
     const lines = [
@@ -593,7 +598,15 @@ document.getElementById("btn-poll").addEventListener("click", async () => {
 
 function dismissPointInfo() {
   document.getElementById("popup").classList.add("hidden");
-  document.getElementById("sheet-point-info").classList.add("hidden");
+  document.getElementById("sheet-mini-point").classList.add("hidden");
+  document.getElementById("sheet-mini-default").classList.remove("hidden");
+  if (_pointInfoVisible) {
+    _pointInfoVisible = false;
+    // Shrink from point-peek back to default peek if sheet is at that height
+    if (isMobile() && sheetEl.getBoundingClientRect().height <= SHEET_POINT_PEEK_H + 8) {
+      setSheetHeight(SHEET_PEEK_H);
+    }
+  }
 }
 
 document.getElementById("popup-close").addEventListener("click", dismissPointInfo);
