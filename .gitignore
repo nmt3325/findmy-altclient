@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Apple account session (contains sensitive auth tokens)
+data/account.json
+data/ani_libs.bin
+data/*.db
+
+# Actual device key files (contain private keys - keep out of git)
+devices/*.json
+devices/*.plist
+!devices/example_custom_device.json
+!devices/.gitkeep
+
+# macOS
+.DS_Store

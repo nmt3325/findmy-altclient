@@ -1,0 +1,10 @@
+{
+  "_comment": "Example custom/OpenHaystack-compatible device file. Replace with your actual device data.",
+  "_comment2": "For AirTags and iPhones: export the .plist file from macOS FindMy app and place it in this folder.",
+  "name": "My AirTag",
+  "model": "AirTag",
+  "privateKey": "BASE64_ENCODED_PRIVATE_KEY_HERE",
+  "symmetricKey": "BASE64_ENCODED_SYMMETRIC_KEY_HERE",
+  "secondaryKey": "BASE64_ENCODED_SECONDARY_KEY_HERE",
+  "pairingDate": 0
+}

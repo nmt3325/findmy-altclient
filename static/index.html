@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FindMy Location Tracker</title>
+
+  <!-- Leaflet.js -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>FindMy Tracker</h1>
+    <div id="poll-status" class="status-badge idle">Idle</div>
+  </div>
+
+  <!-- Time range -->
+  <section class="sidebar-section">
+    <h2>Time Range</h2>
+    <div class="range-row">
+      <label>From</label>
+      <input type="datetime-local" id="range-start" />
+    </div>
+    <div class="range-row">
+      <label>To</label>
+      <input type="datetime-local" id="range-end" />
+    </div>
+    <div class="range-presets">
+      <button class="preset-btn" data-hours="1">1h</button>
+      <button class="preset-btn" data-hours="6">6h</button>
+      <button class="preset-btn" data-hours="24">24h</button>
+      <button class="preset-btn" data-hours="72">3d</button>
+      <button class="preset-btn" data-hours="168">7d</button>
+      <button class="preset-btn" data-hours="720">30d</button>
+    </div>
+    <button id="btn-apply" class="btn-primary">Apply</button>
+  </section>
+
+  <!-- Devices -->
+  <section class="sidebar-section">
+    <h2>Devices</h2>
+    <div id="device-list"></div>
+    <button id="btn-poll" class="btn-secondary">Poll Now</button>
+  </section>
+
+  <!-- Stats -->
+  <section class="sidebar-section" id="stats-section">
+    <h2>Stats</h2>
+    <div id="stats-content" class="stats-grid"></div>
+  </section>
+</div>
+
+<div id="map"></div>
+
+<!-- Point popup -->
+<div id="popup" class="hidden">
+  <div id="popup-inner">
+    <button id="popup-close">&times;</button>
+    <div id="popup-content"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+"""
+FindMy Location History Server
+Polls Apple FindMy network via FindMy.py, stores history in SQLite, serves a map UI.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+import threading
+import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+BASE_DIR = Path(__file__).parent
+DEVICES_DIR = BASE_DIR / "devices"
+DATA_DIR = BASE_DIR / "data"
+DB_PATH = DATA_DIR / "locations.db"
+ACCOUNT_PATH = DATA_DIR / "account.json"
+ANISETTE_LIBS_PATH = DATA_DIR / "ani_libs.bin"
+
+POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL", "900"))  # default 15 min
+ANISETTE_SERVER = os.environ.get("ANISETTE_SERVER", None)
+
+DEVICE_COLORS = [
+    "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
+    "#1abc9c", "#e67e22", "#e91e63", "#00bcd4", "#8bc34a",
+]
+
+app = Flask(__name__, static_folder="static")
+CORS(app)
+
+_poll_lock = threading.Lock()
+_last_poll_time: float = 0.0
+_poll_status: str = "idle"
+
+
+# ---------------------------------------------------------------------------
+# Database helpers
+# ---------------------------------------------------------------------------
+
+def init_db() -> None:
+    DATA_DIR.mkdir(exist_ok=True)
+    with get_db() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS devices (
+                id          TEXT PRIMARY KEY,
+                name        TEXT,
+                model       TEXT,
+                file_path   TEXT NOT NULL,
+                file_type   TEXT NOT NULL DEFAULT 'json',
+                color       TEXT NOT NULL DEFAULT '#3498db',
+                visible     INTEGER NOT NULL DEFAULT 1,
+                last_polled INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS locations (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id   TEXT NOT NULL,
+                timestamp   INTEGER NOT NULL,
+                latitude    REAL NOT NULL,
+                longitude   REAL NOT NULL,
+                confidence  INTEGER,
+                accuracy    REAL,
+                status      INTEGER,
+                FOREIGN KEY (device_id) REFERENCES devices(id),
+                UNIQUE (device_id, timestamp)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_locations_device_ts
+                ON locations (device_id, timestamp);
+        """)
+
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Device discovery
+# ---------------------------------------------------------------------------
+
+def _load_devices_from_disk() -> list[dict[str, Any]]:
+    """Scan devices/ folder and register any new device files in the DB."""
+    DEVICES_DIR.mkdir(exist_ok=True)
+    found: list[dict[str, Any]] = []
+
+    with get_db() as conn:
+        existing = {
+            row["file_path"] for row in conn.execute("SELECT file_path FROM devices").fetchall()
+        }
+        color_idx = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+
+    for path in sorted(DEVICES_DIR.iterdir()):
+        if path.suffix not in (".json", ".plist"):
+            continue
+        rel_path = str(path.relative_to(BASE_DIR))
+        if rel_path in existing:
+            continue
+
+        file_type = "plist" if path.suffix == ".plist" else "json"
+        device_id = path.stem
+        color = DEVICE_COLORS[color_idx % len(DEVICE_COLORS)]
+        color_idx += 1
+
+        # Try to read name/model from JSON files
+        name, model = None, None
+        if file_type == "json":
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                name = data.get("name") or data.get("Name")
+                model = data.get("model") or data.get("productType")
+            except Exception:
+                pass
+
+        with get_db() as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO devices (id, name, model, file_path, file_type, color)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (device_id, name or device_id, model, rel_path, file_type, color),
+            )
+        found.append({"id": device_id, "path": str(path), "type": file_type})
+        logger.info("Registered new device: %s (%s)", device_id, file_type)
+
+    return found
+
+
+# ---------------------------------------------------------------------------
+# FindMy.py polling
+# ---------------------------------------------------------------------------
+
+def _do_poll() -> dict[str, Any]:
+    global _last_poll_time, _poll_status
+
+    if not ACCOUNT_PATH.exists():
+        return {"ok": False, "error": "No account.json found. Run auth_setup.py first."}
+
+    try:
+        from findmy import AppleAccount, FindMyAccessory
+    except ImportError:
+        return {"ok": False, "error": "findmy package not installed. Run: pip install findmy"}
+
+    _poll_status = "polling"
+
+    _load_devices_from_disk()
+
+    with get_db() as conn:
+        device_rows = conn.execute("SELECT * FROM devices").fetchall()
+
+    if not device_rows:
+        _poll_status = "idle"
+        return {"ok": True, "message": "No devices registered. Add device files to the devices/ folder."}
+
+    try:
+        acc = AppleAccount.from_json(
+            str(ACCOUNT_PATH),
+            anisette_server=ANISETTE_SERVER,
+            anisette_libs_path=str(ANISETTE_LIBS_PATH),
+        )
+    except Exception as e:
+        _poll_status = "error"
+        logger.error("Failed to load account: %s", e)
+        return {"ok": False, "error": f"Failed to load account: {e}"}
+
+    accessories = []
+    device_map: dict[Any, str] = {}  # accessory object -> device_id
+
+    for row in device_rows:
+        path = BASE_DIR / row["file_path"]
+        if not path.exists():
+            logger.warning("Device file not found: %s", path)
+            continue
+        try:
+            if row["file_type"] == "plist":
+                acc_obj = FindMyAccessory.from_plist(str(path))
+            else:
+                acc_obj = FindMyAccessory.from_json(str(path))
+            accessories.append(acc_obj)
+            device_map[acc_obj] = row["id"]
+        except Exception as e:
+            logger.error("Failed to load device %s: %s", row["id"], e)
+
+    if not accessories:
+        _poll_status = "idle"
+        return {"ok": True, "message": "No valid devices loaded."}
+
+    logger.info("Polling FindMy for %d device(s)...", len(accessories))
+    new_count = 0
+
+    try:
+        if len(accessories) == 1:
+            reports_raw = acc.fetch_location_history(accessories[0])
+            reports_dict = {accessories[0]: reports_raw} if isinstance(reports_raw, list) else {accessories[0]: [reports_raw]} if reports_raw else {}
+        else:
+            reports_dict = acc.fetch_location_history(accessories)
+
+        for acc_obj, reports in reports_dict.items():
+            device_id = device_map.get(acc_obj)
+            if not device_id or not reports:
+                continue
+            for report in reports:
+                try:
+                    ts = int(report.timestamp.timestamp())
+                    lat = report.latitude
+                    lon = report.longitude
+                    conf = getattr(report, "confidence", None)
+                    acc_m = getattr(report, "horizontal_accuracy", None)
+                    status = getattr(report, "status", None)
+                    with get_db() as conn:
+                        conn.execute(
+                            """INSERT OR IGNORE INTO locations
+                               (device_id, timestamp, latitude, longitude, confidence, accuracy, status)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            (device_id, ts, lat, lon, conf, acc_m, status),
+                        )
+                        new_count += 1
+                except Exception as e:
+                    logger.warning("Skipping bad report for %s: %s", device_id, e)
+
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE devices SET last_polled = ? WHERE id IN (%s)"
+                % ",".join("?" * len(device_map)),
+                [int(time.time())] + list(device_map.values()),
+            )
+
+    except Exception as e:
+        _poll_status = "error"
+        logger.error("Poll failed: %s", e, exc_info=True)
+        return {"ok": False, "error": str(e)}
+    finally:
+        try:
+            acc.to_json(str(ACCOUNT_PATH))
+        except Exception:
+            pass
+
+    _last_poll_time = time.time()
+    _poll_status = "idle"
+    logger.info("Poll complete. %d new reports stored.", new_count)
+    return {"ok": True, "new_reports": new_count}
+
+
+def _background_poller() -> None:
+    """Continuously polls FindMy in the background."""
+    while True:
+        time.sleep(60)  # wait 1 min before first poll to allow server startup
+        if _poll_lock.acquire(blocking=False):
+            try:
+                _do_poll()
+            finally:
+                _poll_lock.release()
+        time.sleep(POLL_INTERVAL_SECONDS - 60)
+
+
+# ---------------------------------------------------------------------------
+# REST API
+# ---------------------------------------------------------------------------
+
+@app.route("/")
+def index():
+    return send_from_directory("static", "index.html")
+
+
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory("static", filename)
+
+
+@app.route("/api/devices", methods=["GET"])
+def api_get_devices():
+    _load_devices_from_disk()
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT d.id, d.name, d.model, d.color, d.visible, d.last_polled,
+                   l.latitude, l.longitude, l.timestamp as last_ts
+            FROM devices d
+            LEFT JOIN locations l ON l.id = (
+                SELECT id FROM locations
+                WHERE device_id = d.id
+                ORDER BY timestamp DESC LIMIT 1
+            )
+        """).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/devices/<device_id>/visible", methods=["PUT"])
+def api_set_visible(device_id: str):
+    body = request.get_json(silent=True) or {}
+    visible = 1 if body.get("visible", True) else 0
+    with get_db() as conn:
+        conn.execute("UPDATE devices SET visible = ? WHERE id = ?", (visible, device_id))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/locations", methods=["GET"])
+def api_get_locations():
+    device_id = request.args.get("device_id")
+    start = request.args.get("start", type=int)
+    end = request.args.get("end", type=int)
+
+    query = "SELECT device_id, timestamp, latitude, longitude, confidence, accuracy, status FROM locations WHERE 1=1"
+    params: list[Any] = []
+
+    if device_id:
+        query += " AND device_id = ?"
+        params.append(device_id)
+    if start is not None:
+        query += " AND timestamp >= ?"
+        params.append(start)
+    if end is not None:
+        query += " AND timestamp <= ?"
+        params.append(end)
+
+    query += " ORDER BY timestamp ASC"
+
+    with get_db() as conn:
+        rows = conn.execute(query, params).fetchall()
+
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/poll", methods=["POST"])
+def api_poll():
+    if not _poll_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "Poll already in progress"}), 429
+    try:
+        result = _do_poll()
+        return jsonify(result)
+    finally:
+        _poll_lock.release()
+
+
+@app.route("/api/status", methods=["GET"])
+def api_status():
+    with get_db() as conn:
+        device_count = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+        report_count = conn.execute("SELECT COUNT(*) FROM locations").fetchone()[0]
+        oldest = conn.execute("SELECT MIN(timestamp) FROM locations").fetchone()[0]
+        newest = conn.execute("SELECT MAX(timestamp) FROM locations").fetchone()[0]
+
+    return jsonify({
+        "devices": device_count,
+        "total_reports": report_count,
+        "oldest_report": oldest,
+        "newest_report": newest,
+        "last_poll": _last_poll_time,
+        "poll_status": _poll_status,
+        "poll_interval_seconds": POLL_INTERVAL_SECONDS,
+        "account_configured": ACCOUNT_PATH.exists(),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Startup
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    init_db()
+    _load_devices_from_disk()
+
+    poller_thread = threading.Thread(target=_background_poller, daemon=True)
+    poller_thread.start()
+    logger.info("Background poller started (interval: %ds)", POLL_INTERVAL_SECONDS)
+
+    port = int(os.environ.get("PORT", "8080"))
+    logger.info("Starting server on http://0.0.0.0:%d", port)
+    app.run(host="0.0.0.0", port=port, debug=False)
