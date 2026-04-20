@@ -59,9 +59,10 @@ new MapTypeControl().addTo(map);
 // ---------------------------------------------------------------------------
 
 let devices = [];           // [{id, name, color, visible, ...}]
-let deviceLayers = {};      // device_id -> { polyline, markers[] }
-let rangeStart = null;      // JS Date | null
-let rangeEnd   = null;      // JS Date | null
+let deviceLayers = {};      // device_id -> { polyline, markers[], points[] }
+let rangeStart = null;
+let rangeEnd   = null;
+let expandedDeviceId = null;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -115,22 +116,26 @@ function makeMarker(device, point) {
 
   marker.on("click", (e) => {
     L.DomEvent.stopPropagation(e);
-    const dt = new Date(point.timestamp * 1000);
-    const lines = [
-      `<strong>${device.name}</strong>`,
-      `<span class="popup-time">${dt.toLocaleString()}</span>`,
-      `Lat: ${point.lat.toFixed(6)}`,
-      `Lng: ${point.lng.toFixed(6)}`,
-    ];
-    if (point.accuracy != null) lines.push(`Accuracy: ±${point.accuracy}m`);
-    if (point.confidence != null) lines.push(`Confidence: ${point.confidence}`);
-    if (point.raw_count > 1) lines.push(`(avg of ${point.raw_count} reports)`);
-
-    document.getElementById("popup-content").innerHTML = lines.join("<br>");
-    document.getElementById("popup").classList.remove("hidden");
+    showPointPopup(device, point);
   });
 
   return marker;
+}
+
+function showPointPopup(device, point) {
+  const dt = new Date(point.timestamp * 1000);
+  const lines = [
+    `<strong>${device.name || device.id}</strong>`,
+    `<span class="popup-time">${dt.toLocaleString()}</span>`,
+    `Lat: ${point.lat.toFixed(6)}`,
+    `Lng: ${point.lng.toFixed(6)}`,
+  ];
+  if (point.accuracy != null) lines.push(`Accuracy: ±${point.accuracy}m`);
+  if (point.confidence != null) lines.push(`Confidence: ${point.confidence}`);
+  if (point.raw_count > 1) lines.push(`(avg of ${point.raw_count} reports)`);
+
+  document.getElementById("popup-content").innerHTML = lines.join("<br>");
+  document.getElementById("popup").classList.remove("hidden");
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +151,6 @@ function clearDeviceLayers() {
 }
 
 async function renderDevice(device) {
-  // Remove existing layers for this device
   if (deviceLayers[device.id]) {
     const { polyline, markers } = deviceLayers[device.id];
     if (polyline) map.removeLayer(polyline);
@@ -154,7 +158,7 @@ async function renderDevice(device) {
   }
 
   if (!device.visible) {
-    deviceLayers[device.id] = { polyline: null, markers: [] };
+    deviceLayers[device.id] = { polyline: null, markers: [], points: [] };
     return;
   }
 
@@ -167,8 +171,11 @@ async function renderDevice(device) {
   const raw = await resp.json();
 
   const points = groupByTimestamp(raw);
+
   if (points.length === 0) {
-    deviceLayers[device.id] = { polyline: null, markers: [] };
+    deviceLayers[device.id] = { polyline: null, markers: [], points: [] };
+    // If this device was expanded, refresh its history panel to show "no data"
+    if (expandedDeviceId === device.id) refreshHistoryPanel(device);
     return;
   }
 
@@ -181,8 +188,10 @@ async function renderDevice(device) {
   }).addTo(map);
 
   const markers = points.map(p => makeMarker(device, p));
-  // Latest point gets a bigger star-like marker
-  const latestMarker = L.circleMarker([points[points.length - 1].lat, points[points.length - 1].lng], {
+
+  // Latest point: larger marker
+  const latest = points[points.length - 1];
+  const latestMarker = L.circleMarker([latest.lat, latest.lng], {
     radius: 9,
     color: device.color,
     fillColor: device.color,
@@ -191,27 +200,108 @@ async function renderDevice(device) {
   });
   latestMarker.on("click", (e) => {
     L.DomEvent.stopPropagation(e);
-    markers[markers.length - 1].fire("click", e);
+    showPointPopup(device, latest);
   });
 
   markers.forEach(m => m.addTo(map));
   latestMarker.addTo(map);
   markers.push(latestMarker);
 
-  deviceLayers[device.id] = { polyline, markers };
+  deviceLayers[device.id] = { polyline, markers, points };
+
+  // If this device was already expanded, refresh its history panel
+  if (expandedDeviceId === device.id) refreshHistoryPanel(device);
 }
 
 async function renderAll() {
-  const promises = devices.map(d => renderDevice(d));
-  await Promise.all(promises);
+  await Promise.all(devices.map(d => renderDevice(d)));
 
-  // Fit map to visible tracks
   const visibleLayers = devices
     .filter(d => d.visible && deviceLayers[d.id]?.polyline)
     .map(d => deviceLayers[d.id].polyline);
   if (visibleLayers.length > 0) {
     const group = L.featureGroup(visibleLayers);
     map.fitBounds(group.getBounds().pad(0.1));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Device history panel
+// ---------------------------------------------------------------------------
+
+function refreshHistoryPanel(device) {
+  const panel = document.getElementById(`history-${device.id}`);
+  if (!panel) return;
+  renderHistoryItems(panel, device);
+}
+
+function renderHistoryItems(panel, device) {
+  const points = deviceLayers[device.id]?.points ?? [];
+  panel.innerHTML = "";
+
+  if (points.length === 0) {
+    panel.innerHTML = '<div class="history-empty">No data in selected range</div>';
+    return;
+  }
+
+  // Show newest first
+  const sorted = [...points].reverse();
+  sorted.forEach(point => {
+    const item = document.createElement("div");
+    item.className = "history-item";
+
+    const timeEl = document.createElement("span");
+    timeEl.className = "history-time";
+    timeEl.textContent = new Date(point.timestamp * 1000).toLocaleString();
+
+    item.appendChild(timeEl);
+
+    if (point.accuracy != null) {
+      const accEl = document.createElement("span");
+      accEl.className = "history-acc";
+      accEl.textContent = `±${Math.round(point.accuracy)}m`;
+      item.appendChild(accEl);
+    }
+
+    item.addEventListener("click", () => {
+      map.flyTo([point.lat, point.lng], 17, { duration: 1.0 });
+      showPointPopup(device, point);
+    });
+
+    panel.appendChild(item);
+  });
+}
+
+function toggleDeviceHistory(device, headerEl) {
+  const panel = document.getElementById(`history-${device.id}`);
+  const arrow = headerEl.querySelector(".device-arrow");
+  const isOpen = expandedDeviceId === device.id;
+
+  if (isOpen) {
+    // Collapse
+    panel.style.maxHeight = "0";
+    arrow.classList.remove("open");
+    expandedDeviceId = null;
+  } else {
+    // Collapse any other open panel first
+    if (expandedDeviceId) {
+      const prevPanel = document.getElementById(`history-${expandedDeviceId}`);
+      const prevArrow = document.querySelector(`[data-device-id="${expandedDeviceId}"] .device-arrow`);
+      if (prevPanel) prevPanel.style.maxHeight = "0";
+      if (prevArrow) prevArrow.classList.remove("open");
+    }
+
+    expandedDeviceId = device.id;
+    renderHistoryItems(panel, device);
+    panel.style.maxHeight = panel.scrollHeight + "px";
+    arrow.classList.add("open");
+
+    // Zoom map to latest point
+    const points = deviceLayers[device.id]?.points ?? [];
+    if (points.length > 0) {
+      const latest = points[points.length - 1];
+      map.flyTo([latest.lat, latest.lng], 16, { duration: 1.2 });
+    }
   }
 }
 
@@ -227,17 +317,36 @@ function renderDeviceList() {
   }
   el.innerHTML = "";
   devices.forEach(device => {
-    const row = document.createElement("div");
-    row.className = "device-row";
+    // ── Card wrapper ──────────────────────────────────────────────────────
+    const card = document.createElement("div");
+    card.className = "device-card";
+
+    // ── Header row ────────────────────────────────────────────────────────
+    const header = document.createElement("div");
+    header.className = "device-row-header";
+    header.dataset.deviceId = device.id;
 
     const swatch = document.createElement("span");
     swatch.className = "device-color";
     swatch.style.background = device.color;
 
+    // Name + arrow (clickable area)
+    const nameBtn = document.createElement("div");
+    nameBtn.className = "device-name-btn";
+
     const nameEl = document.createElement("span");
     nameEl.className = "device-name";
     nameEl.textContent = device.name || device.id;
 
+    const arrow = document.createElement("span");
+    arrow.className = "device-arrow";
+    arrow.textContent = "▶";
+
+    nameBtn.appendChild(nameEl);
+    nameBtn.appendChild(arrow);
+    nameBtn.addEventListener("click", () => toggleDeviceHistory(device, header));
+
+    // Toggle switch
     const toggle = document.createElement("label");
     toggle.className = "toggle-switch";
     const checkbox = document.createElement("input");
@@ -261,11 +370,30 @@ function renderDeviceList() {
     lastSeen.className = "device-last-seen";
     lastSeen.textContent = device.last_ts ? fmtDatetime(device.last_ts) : "No data";
 
-    row.appendChild(swatch);
-    row.appendChild(nameEl);
-    row.appendChild(toggle);
-    row.appendChild(lastSeen);
-    el.appendChild(row);
+    header.appendChild(swatch);
+    header.appendChild(nameBtn);
+    header.appendChild(toggle);
+    header.appendChild(lastSeen);
+
+    // ── History panel ─────────────────────────────────────────────────────
+    const historyPanel = document.createElement("div");
+    historyPanel.className = "device-history";
+    historyPanel.id = `history-${device.id}`;
+    historyPanel.style.maxHeight = "0";
+
+    // Restore open state if this device was expanded before re-render
+    if (expandedDeviceId === device.id) {
+      renderHistoryItems(historyPanel, device);
+      // Use setTimeout to allow DOM to render before measuring scrollHeight
+      setTimeout(() => {
+        historyPanel.style.maxHeight = historyPanel.scrollHeight + "px";
+      }, 0);
+      arrow.classList.add("open");
+    }
+
+    card.appendChild(header);
+    card.appendChild(historyPanel);
+    el.appendChild(card);
   });
 }
 
@@ -354,7 +482,6 @@ map.on("click", () => document.getElementById("popup").classList.add("hidden"));
 // ---------------------------------------------------------------------------
 
 (async function init() {
-  // Default range: last 24 hours
   const now = new Date();
   const dayAgo = new Date(now.getTime() - 24 * 3600 * 1000);
   rangeStart = dayAgo;
@@ -366,9 +493,7 @@ map.on("click", () => document.getElementById("popup").classList.add("hidden"));
   await renderAll();
   await updateStats();
 
-  // Refresh stats every 30s
   setInterval(updateStats, 30_000);
-  // Refresh device list every 60s (picks up new poll results)
   setInterval(async () => {
     await loadDevices();
     await renderAll();

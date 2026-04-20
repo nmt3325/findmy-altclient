@@ -140,9 +140,14 @@ body {
 /* ─── Device list ───────────────────────────────────────────────────────── */
 #device-list { display: flex; flex-direction: column; gap: 6px; }
 
-.device-row {
+/* Card wraps header + collapsible history */
+.device-card {
   background: #0f3460;
   border-radius: 6px;
+  overflow: hidden;
+}
+
+.device-row-header {
   padding: 8px 10px;
   display: grid;
   grid-template-columns: 12px 1fr auto;
@@ -156,9 +161,19 @@ body {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  display: inline-block;
   flex-shrink: 0;
 }
+
+/* Clickable name + arrow */
+.device-name-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+}
+.device-name-btn:hover .device-name { color: #7fb3f5; }
 
 .device-name {
   font-size: 12px;
@@ -167,12 +182,62 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: color .15s;
 }
+
+.device-arrow {
+  font-size: 9px;
+  color: #556;
+  flex-shrink: 0;
+  display: inline-block;
+  transition: transform .2s;
+}
+.device-arrow.open { transform: rotate(90deg); color: #7fb3f5; }
 
 .device-last-seen {
   grid-column: 2;
   font-size: 10px;
   color: #888;
+}
+
+/* ─── History panel ─────────────────────────────────────────────────────── */
+.device-history {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .25s ease;
+  background: #0a2540;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 12px;
+  border-top: 1px solid #0f3460;
+  cursor: pointer;
+  gap: 8px;
+  transition: background .12s;
+}
+.history-item:hover { background: #133060; }
+
+.history-time {
+  font-size: 11px;
+  color: #ccd;
+  white-space: nowrap;
+}
+
+.history-acc {
+  font-size: 10px;
+  color: #556;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.history-empty {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: #556;
+  border-top: 1px solid #0f3460;
 }
 
 /* Toggle switch */
