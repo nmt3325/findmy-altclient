@@ -222,7 +222,7 @@ function renderTable() {
   const pageRows = filteredReports.slice(startIdx, startIdx + pageSize);
 
   if (total === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="table-empty">No reports match the current filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="table-empty">No reports match the current filters.</td></tr>';
   } else {
     tbody.innerHTML = "";
     pageRows.forEach((r, i) => {
@@ -239,7 +239,6 @@ function renderTable() {
           ${devName}
         </td>
         <td class="col-time">${escHtml(fmtDatetime(r.timestamp))}</td>
-        <td class="col-ts">${r.timestamp}</td>
         <td class="col-lat">${r.latitude.toFixed(6)}</td>
         <td class="col-lng">${r.longitude.toFixed(6)}</td>
         <td class="col-conf">${r.confidence != null ? r.confidence : '<span class="null-val">—</span>'}</td>
