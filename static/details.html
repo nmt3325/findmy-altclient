@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Report Details – FindMy Tracker</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/details.css" />
+</head>
+<body class="details-page">
+
+<div id="details-layout">
+
+  <!-- ─── Filter Sidebar ─────────────────────────────────────────────────── -->
+  <aside id="filter-sidebar">
+    <div id="filter-header">
+      <a href="/" class="back-link">← Map</a>
+      <h1>Report Details</h1>
+    </div>
+
+    <!-- Device filter -->
+    <section class="filter-section">
+      <h2>Device</h2>
+      <div id="device-filter-list">
+        <label class="filter-check">
+          <input type="checkbox" id="filter-all-devices" checked />
+          <span>All Devices</span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Time range -->
+    <section class="filter-section">
+      <h2>Time Range</h2>
+      <div class="range-row">
+        <label>From</label>
+        <input type="datetime-local" id="filter-start" />
+      </div>
+      <div class="range-row">
+        <label>To</label>
+        <input type="datetime-local" id="filter-end" />
+      </div>
+      <div class="range-presets">
+        <button class="preset-btn" data-hours="1">1h</button>
+        <button class="preset-btn" data-hours="6">6h</button>
+        <button class="preset-btn" data-days="3">3d</button>
+        <button class="preset-btn" data-days="7">7d</button>
+        <button class="preset-btn" data-days="30">30d</button>
+        <button class="preset-btn" data-all="1">All</button>
+      </div>
+    </section>
+
+    <!-- Confidence filter -->
+    <section class="filter-section">
+      <h2>Confidence</h2>
+      <div class="range-row">
+        <label>Min</label>
+        <input type="number" id="filter-conf-min" min="0" max="100" placeholder="0" class="num-input" />
+      </div>
+      <div class="range-row">
+        <label>Max</label>
+        <input type="number" id="filter-conf-max" min="0" max="100" placeholder="100" class="num-input" />
+      </div>
+    </section>
+
+    <!-- Accuracy filter -->
+    <section class="filter-section">
+      <h2>Accuracy (m)</h2>
+      <div class="range-row">
+        <label>Min</label>
+        <input type="number" id="filter-acc-min" min="0" placeholder="—" class="num-input" />
+      </div>
+      <div class="range-row">
+        <label>Max</label>
+        <input type="number" id="filter-acc-max" min="0" placeholder="—" class="num-input" />
+      </div>
+    </section>
+
+    <!-- Status filter -->
+    <section class="filter-section">
+      <h2>Status</h2>
+      <div class="range-row">
+        <label style="width:auto; margin-right:6px;">Value</label>
+        <input type="number" id="filter-status" placeholder="Any" class="num-input" />
+      </div>
+      <p class="filter-hint">Leave blank to show all</p>
+    </section>
+
+    <!-- Actions -->
+    <section class="filter-section">
+      <button id="btn-apply-filter" class="btn-primary">Apply Filters</button>
+      <button id="btn-reset-filter" class="btn-secondary" style="margin-top:6px;">Reset</button>
+    </section>
+  </aside>
+
+  <!-- ─── Main Content ────────────────────────────────────────────────────── -->
+  <main id="details-main">
+
+    <!-- Top bar -->
+    <div id="details-topbar">
+      <div id="summary-bar">
+        <span id="summary-count">Loading…</span>
+      </div>
+      <div id="table-controls">
+        <input type="text" id="search-input" placeholder="Search device, time, coordinates…" autocomplete="off" />
+        <button id="btn-export-csv" class="btn-secondary export-btn">Export CSV</button>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div id="table-container">
+      <table id="report-table">
+        <thead>
+          <tr>
+            <th class="col-num">#</th>
+            <th class="col-device sortable" data-col="device_id">Device</th>
+            <th class="col-time sortable" data-col="timestamp">Date / Time</th>
+            <th class="col-ts sortable" data-col="timestamp">Unix TS</th>
+            <th class="col-lat sortable" data-col="latitude">Latitude</th>
+            <th class="col-lng sortable" data-col="longitude">Longitude</th>
+            <th class="col-conf sortable" data-col="confidence">Confidence</th>
+            <th class="col-acc sortable" data-col="accuracy">Accuracy (m)</th>
+            <th class="col-status sortable" data-col="status">Status</th>
+            <th class="col-action">Map</th>
+          </tr>
+        </thead>
+        <tbody id="report-tbody">
+          <tr><td colspan="10" class="table-loading">Loading reports…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div id="pagination">
+      <button id="btn-prev" disabled>‹ Prev</button>
+      <span id="page-info"></span>
+      <button id="btn-next">Next ›</button>
+      <select id="page-size-select">
+        <option value="25">25 / page</option>
+        <option value="50" selected>50 / page</option>
+        <option value="100">100 / page</option>
+        <option value="200">200 / page</option>
+      </select>
+    </div>
+
+  </main>
+</div>
+
+<script src="/static/details.js"></script>
+</body>
+</html>
