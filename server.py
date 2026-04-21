@@ -287,6 +287,11 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+@app.route("/details")
+def details():
+    return send_from_directory("static", "details.html")
+
+
 @app.route("/static/<path:filename>")
 def static_files(filename):
     return send_from_directory("static", filename)
