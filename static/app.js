@@ -427,6 +427,57 @@ function toggleDeviceHistory(device, headerEl) {
 }
 
 // ---------------------------------------------------------------------------
+// Device name inline edit
+// ---------------------------------------------------------------------------
+
+function startNameEdit(device, nameEl, editBtn) {
+  // Prevent multiple edits at once
+  if (nameEl.parentNode.querySelector(".device-name-input")) return;
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "device-name-input";
+  input.value = device.name || device.id;
+
+  let saved = false;
+
+  const save = async () => {
+    if (saved) return;
+    saved = true;
+    const newName = input.value.trim();
+    input.replaceWith(nameEl);
+    editBtn.style.display = "";
+    if (newName && newName !== device.name) {
+      await fetch(`/api/devices/${device.id}/name`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      });
+      device.name = newName;
+      nameEl.textContent = newName;
+    }
+  };
+
+  const cancel = () => {
+    if (saved) return;
+    saved = true;
+    input.replaceWith(nameEl);
+    editBtn.style.display = "";
+  };
+
+  input.addEventListener("blur", save);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    if (e.key === "Escape") { input.removeEventListener("blur", save); cancel(); }
+  });
+
+  nameEl.replaceWith(input);
+  editBtn.style.display = "none";
+  input.focus();
+  input.select();
+}
+
+// ---------------------------------------------------------------------------
 // Sidebar – device list
 // ---------------------------------------------------------------------------
 
@@ -434,6 +485,7 @@ function renderDeviceList() {
   const el = document.getElementById("device-list");
   if (devices.length === 0) {
     el.innerHTML = '<p class="no-devices">No devices found.<br>Add .json or .plist files to the <code>devices/</code> folder.</p>';
+    updateToggleAllLabel();
     return;
   }
   el.innerHTML = "";
@@ -447,29 +499,52 @@ function renderDeviceList() {
     header.className = "device-row-header";
     header.dataset.deviceId = device.id;
 
+    // Clicking the header (non-interactive areas) flies to latest location
+    header.addEventListener("click", () => {
+      const points = deviceLayers[device.id]?.points ?? [];
+      if (points.length > 0) {
+        const latest = points[points.length - 1];
+        flyToVisible([latest.lat, latest.lng], 16, 1.2);
+        showPointPopup(device, latest);
+      }
+    });
+
     const swatch = document.createElement("span");
     swatch.className = "device-color";
     swatch.style.background = device.color;
 
-    // Name + arrow (clickable area)
+    // Name + edit icon + arrow
     const nameBtn = document.createElement("div");
     nameBtn.className = "device-name-btn";
+    // Stop propagation so nameBtn clicks don't trigger the header fly-to
+    nameBtn.addEventListener("click", (e) => e.stopPropagation());
 
     const nameEl = document.createElement("span");
     nameEl.className = "device-name";
     nameEl.textContent = device.name || device.id;
+    nameEl.addEventListener("click", () => toggleDeviceHistory(device, header));
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "device-edit-btn";
+    editBtn.title = "Rename device";
+    editBtn.textContent = "✎";
+    editBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      startNameEdit(device, nameEl, editBtn);
+    });
 
     const arrow = document.createElement("span");
     arrow.className = "device-arrow";
     arrow.textContent = "▶";
 
     nameBtn.appendChild(nameEl);
+    nameBtn.appendChild(editBtn);
     nameBtn.appendChild(arrow);
-    nameBtn.addEventListener("click", () => toggleDeviceHistory(device, header));
 
-    // Toggle switch
+    // Toggle switch – stop propagation so it doesn't trigger header click
     const toggle = document.createElement("label");
     toggle.className = "toggle-switch";
+    toggle.addEventListener("click", (e) => e.stopPropagation());
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = !!device.visible;
@@ -481,6 +556,7 @@ function renderDeviceList() {
         body: JSON.stringify({ visible: device.visible }),
       });
       renderDevice(device);
+      updateToggleAllLabel();
     });
     const slider = document.createElement("span");
     slider.className = "slider";
@@ -516,6 +592,97 @@ function renderDeviceList() {
     card.appendChild(historyPanel);
     el.appendChild(card);
   });
+
+  updateToggleAllLabel();
+}
+
+// ---------------------------------------------------------------------------
+// Toggle all devices
+// ---------------------------------------------------------------------------
+
+function updateToggleAllLabel() {
+  const btn = document.getElementById("btn-toggle-all");
+  if (!btn) return;
+  const allVisible = devices.length > 0 && devices.every(d => d.visible);
+  btn.textContent = allVisible ? "Hide All" : "Show All";
+}
+
+async function toggleAllDevices() {
+  const allVisible = devices.every(d => d.visible);
+  const newVisible = allVisible ? 0 : 1;
+
+  await Promise.all(devices.map(d => {
+    d.visible = newVisible;
+    return fetch(`/api/devices/${d.id}/visible`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visible: newVisible }),
+    });
+  }));
+
+  renderDeviceList();
+  await renderAll();
+}
+
+// ---------------------------------------------------------------------------
+// Poll details panel
+// ---------------------------------------------------------------------------
+
+let _pollDetailsOpen = false;
+let _pollDetailsInterval = null;
+
+function togglePollDetails() {
+  _pollDetailsOpen = !_pollDetailsOpen;
+  const panel = document.getElementById("poll-details-panel");
+  const badge = document.getElementById("poll-status");
+
+  if (_pollDetailsOpen) {
+    panel.classList.add("open");
+    badge.setAttribute("aria-expanded", "true");
+    updatePollDetails();
+    _pollDetailsInterval = setInterval(updatePollDetails, 3000);
+  } else {
+    panel.classList.remove("open");
+    badge.setAttribute("aria-expanded", "false");
+    if (_pollDetailsInterval) {
+      clearInterval(_pollDetailsInterval);
+      _pollDetailsInterval = null;
+    }
+  }
+}
+
+function fmtCountdown(secs) {
+  if (secs <= 0) return "soon";
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+async function updatePollDetails() {
+  const resp = await fetch("/api/status");
+  if (!resp.ok) return;
+  const s = await resp.json();
+
+  const now = Date.now() / 1000;
+  const nextPollAt = s.last_poll ? s.last_poll + s.poll_interval_seconds : null;
+  const secsUntilNext = nextPollAt ? Math.max(0, Math.round(nextPollAt - now)) : null;
+
+  const statusLabel = s.poll_status === "polling" ? "Polling…"
+    : s.poll_status === "error" ? "Error"
+    : s.account_configured ? "Idle" : "No account";
+  const statusClass = s.poll_status === "polling" ? "polling"
+    : s.poll_status === "error" ? "error"
+    : s.account_configured ? "idle" : "warn";
+
+  const el = document.getElementById("poll-details-content");
+  el.innerHTML = `
+    <div class="pd-row"><span>Status</span><strong class="status-text ${statusClass}">${statusLabel}</strong></div>
+    <div class="pd-row"><span>Last poll</span><strong>${s.last_poll ? fmtDatetime(Math.floor(s.last_poll)) : "Never"}</strong></div>
+    <div class="pd-row"><span>Next poll</span><strong>${s.poll_status === "polling" ? "Now" : secsUntilNext !== null ? fmtCountdown(secsUntilNext) : "—"}</strong></div>
+    <div class="pd-row"><span>Interval</span><strong>${s.poll_interval_seconds / 60} min</strong></div>
+    <div class="pd-row"><span>Reports stored</span><strong>${s.total_reports.toLocaleString()}</strong></div>
+  `;
 }
 
 // ---------------------------------------------------------------------------
@@ -537,12 +704,19 @@ async function updateStats() {
     <div class="stat"><span>Next poll</span><strong>~${s.poll_interval_seconds / 60} min interval</strong></div>
   `;
 
-  const label = s.poll_status === "polling" ? "Polling…" : s.account_configured ? "Idle" : "No account";
-  const cls   = "status-badge " + (s.poll_status === "polling" ? "polling" : s.account_configured ? "idle" : "warn");
+  const label = s.poll_status === "polling" ? "Polling…"
+    : s.poll_status === "error" ? "Error"
+    : s.account_configured ? "Idle" : "No account";
+  const cls   = "status-badge " + (s.poll_status === "polling" ? "polling"
+    : s.poll_status === "error" ? "error"
+    : s.account_configured ? "idle" : "warn");
   const badge = document.getElementById("poll-status");
   badge.textContent = label; badge.className = cls;
   const miniBadge = document.getElementById("poll-status-mini");
   if (miniBadge) { miniBadge.textContent = label; miniBadge.className = cls; }
+
+  // If details panel is open, refresh it too
+  if (_pollDetailsOpen) updatePollDetails();
 }
 
 // ---------------------------------------------------------------------------
@@ -602,6 +776,19 @@ document.getElementById("btn-poll").addEventListener("click", async () => {
     await updateStats();
   }
 });
+
+document.getElementById("btn-toggle-all").addEventListener("click", toggleAllDevices);
+
+document.getElementById("poll-status").addEventListener("click", togglePollDetails);
+const pollStatusMini = document.getElementById("poll-status-mini");
+if (pollStatusMini) {
+  pollStatusMini.style.cursor = "pointer";
+  pollStatusMini.addEventListener("click", (e) => {
+    e.stopPropagation();
+    expandSheetIfPeeked();
+    togglePollDetails();
+  });
+}
 
 function dismissPointInfo() {
   document.getElementById("popup").classList.add("hidden");

@@ -41,7 +41,12 @@
     <div id="sidebar-header">
       <h1>FindMy Tracker</h1>
       <a href="/details" id="details-link" title="Report Details">Details</a>
-      <div id="poll-status" class="status-badge idle">Idle</div>
+      <button id="poll-status" class="status-badge idle" aria-expanded="false">Idle</button>
+    </div>
+
+    <!-- Poll details panel -->
+    <div id="poll-details-panel" class="poll-details-panel">
+      <div id="poll-details-content" class="poll-details-content"></div>
     </div>
 
     <!-- Time range -->
@@ -67,7 +72,10 @@
 
     <!-- Devices -->
     <section class="sidebar-section">
-      <h2>Devices</h2>
+      <div class="section-header-row">
+        <h2>Devices</h2>
+        <button id="btn-toggle-all" class="btn-toggle-all">Hide All</button>
+      </div>
       <div id="device-list"></div>
       <button id="btn-poll" class="btn-secondary">Poll Now</button>
     </section>

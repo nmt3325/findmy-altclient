@@ -389,6 +389,108 @@ body {
   font-weight: 600;
 }
 
+/* ─── Poll details panel ────────────────────────────────────────────────── */
+.poll-details-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height .25s ease;
+  background: #f8f9fa;
+  border-bottom: 1px solid #f1f3f4;
+}
+.poll-details-panel.open {
+  max-height: 200px;
+}
+
+.poll-details-content {
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pd-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 2px 0;
+  border-bottom: 1px solid #e8eaed;
+}
+.pd-row:last-child { border-bottom: none; }
+.pd-row span { color: #9aa0a6; }
+.pd-row strong { color: #202124; }
+
+.status-text.polling { color: #34a853; }
+.status-text.idle    { color: #4285f4; }
+.status-text.warn    { color: #f9ab00; }
+.status-text.error   { color: #ea4335; }
+
+/* Make poll-status badge (a button) look and behave like the badge */
+#poll-status {
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+#poll-status:focus-visible {
+  outline: 2px solid #4285f4;
+  outline-offset: 2px;
+  border-radius: 20px;
+}
+
+/* ─── Section header row (Devices h2 + toggle-all btn) ──────────────────── */
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.section-header-row h2 {
+  margin-bottom: 0;
+}
+
+.btn-toggle-all {
+  font-size: 10px;
+  font-weight: 500;
+  color: #4285f4;
+  background: #fff;
+  border: 1px solid #c5d5f7;
+  border-radius: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s;
+  font-family: inherit;
+}
+.btn-toggle-all:hover { background: #e8f0fe; }
+
+/* ─── Device name edit button ───────────────────────────────────────────── */
+.device-edit-btn {
+  background: none;
+  border: none;
+  color: #bdc1c6;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  font-family: inherit;
+  transition: color .15s;
+}
+.device-edit-btn:hover { color: #4285f4; }
+
+.device-name-input {
+  font-size: 12px;
+  font-weight: 500;
+  color: #202124;
+  border: 1px solid #4285f4;
+  border-radius: 3px;
+  padding: 1px 4px;
+  outline: none;
+  min-width: 0;
+  flex: 1;
+  font-family: inherit;
+  box-shadow: 0 0 0 2px rgba(66,133,244,.15);
+}
+
 /* ─── Scrollbar ─────────────────────────────────────────────────────────── */
 #sidebar::-webkit-scrollbar { width: 4px; }
 #sidebar::-webkit-scrollbar-track { background: transparent; }

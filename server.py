@@ -323,6 +323,17 @@ def api_set_visible(device_id: str):
     return jsonify({"ok": True})
 
 
+@app.route("/api/devices/<device_id>/name", methods=["PUT"])
+def api_set_name(device_id: str):
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "Name cannot be empty"}), 400
+    with get_db() as conn:
+        conn.execute("UPDATE devices SET name = ? WHERE id = ?", (name, device_id))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/locations", methods=["GET"])
 def api_get_locations():
     device_id = request.args.get("device_id")
