@@ -217,7 +217,6 @@ body.details-page {
 .col-num    { width: 44px; text-align: right; color: #9aa0a6 !important; }
 .col-device { min-width: 120px; }
 .col-time   { min-width: 160px; }
-.col-ts     { min-width: 100px; font-family: monospace; font-size: 11px; color: #5f6368; }
 .col-lat,
 .col-lng    { min-width: 96px; font-family: monospace; font-size: 11px; }
 .col-conf,
@@ -324,7 +323,4 @@ body.details-page {
   }
 
   #search-input { width: 160px; }
-
-  /* Hide Unix TS column on small screens */
-  .col-ts { display: none; }
 }
