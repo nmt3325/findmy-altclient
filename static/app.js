@@ -854,6 +854,75 @@ document.getElementById("sheet-point-close").addEventListener("click", dismissPo
 map.on("click", dismissPointInfo);
 
 // ---------------------------------------------------------------------------
+// Live log streaming
+// ---------------------------------------------------------------------------
+
+let _logEventSource = null;
+let _logsOpen = false;
+
+function toggleLogs() {
+  _logsOpen = !_logsOpen;
+  const panel = document.getElementById("log-panel");
+  const btn   = document.getElementById("btn-toggle-logs");
+
+  if (_logsOpen) {
+    panel.classList.remove("hidden");
+    btn.textContent = "Hide";
+    startLogStream();
+    expandSheetIfPeeked();
+  } else {
+    panel.classList.add("hidden");
+    btn.textContent = "Show";
+    stopLogStream();
+  }
+}
+
+function startLogStream() {
+  if (_logEventSource) return;
+
+  const output = document.getElementById("log-output");
+  _logEventSource = new EventSource("/api/logs");
+
+  _logEventSource.onmessage = (e) => {
+    const autoscroll = document.getElementById("log-autoscroll")?.checked ?? true;
+    const line = document.createElement("div");
+    line.className = "log-line";
+    const text = e.data;
+    if (text.includes("[ERROR]"))   line.classList.add("log-error");
+    else if (text.includes("[WARNING]")) line.classList.add("log-warn");
+    else if (text.includes("[DEBUG]"))   line.classList.add("log-debug");
+    line.textContent = text;
+    output.appendChild(line);
+
+    // Cap at 1000 lines to avoid memory growth
+    while (output.children.length > 1000) output.removeChild(output.firstChild);
+
+    if (autoscroll) output.scrollTop = output.scrollHeight;
+  };
+
+  _logEventSource.onerror = () => {
+    const line = document.createElement("div");
+    line.className = "log-line log-warn";
+    line.textContent = "[Connection lost — will reconnect automatically]";
+    output.appendChild(line);
+    output.scrollTop = output.scrollHeight;
+  };
+}
+
+function stopLogStream() {
+  if (_logEventSource) {
+    _logEventSource.close();
+    _logEventSource = null;
+  }
+}
+
+document.getElementById("btn-toggle-logs").addEventListener("click", toggleLogs);
+
+document.getElementById("btn-log-clear").addEventListener("click", () => {
+  document.getElementById("log-output").innerHTML = "";
+});
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 

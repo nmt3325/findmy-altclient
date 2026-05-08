@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import sqlite3
 import threading
 import time
@@ -17,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 from flask_cors import CORS
 
 logging.basicConfig(
@@ -25,6 +26,31 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# SSE log streaming
+# ---------------------------------------------------------------------------
+
+_log_clients: set[queue.Queue] = set()
+_log_clients_lock = threading.Lock()
+
+
+class _SseLogHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = self.format(record)
+        with _log_clients_lock:
+            dead: set[queue.Queue] = set()
+            for q in _log_clients:
+                try:
+                    q.put_nowait(msg)
+                except queue.Full:
+                    dead.add(q)
+            _log_clients.difference_update(dead)
+
+
+_sse_handler = _SseLogHandler()
+_sse_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+logging.getLogger().addHandler(_sse_handler)
 
 BASE_DIR = Path(__file__).parent
 DEVICES_DIR = BASE_DIR / "devices"
@@ -517,6 +543,38 @@ def api_status():
         "google_last_poll": _last_google_poll_time,
         "google_poll_status": _google_poll_status,
     })
+
+
+@app.route("/api/logs")
+def api_logs():
+    def generate():
+        client_q: queue.Queue = queue.Queue(maxsize=300)
+        with _log_clients_lock:
+            _log_clients.add(client_q)
+        try:
+            yield "data: [Log stream connected]\n\n"
+            while True:
+                try:
+                    msg = client_q.get(timeout=20)
+                    # Escape embedded newlines so each SSE message stays on one logical line
+                    safe = msg.replace("\n", "↵")
+                    yield f"data: {safe}\n\n"
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            with _log_clients_lock:
+                _log_clients.discard(client_q)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

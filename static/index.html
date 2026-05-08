@@ -88,6 +88,24 @@
       <h2>Stats</h2>
       <div id="stats-content" class="stats-grid"></div>
     </section>
+
+    <!-- Live Logs -->
+    <section class="sidebar-section" id="log-section">
+      <div class="section-header-row">
+        <h2>Live Logs</h2>
+        <button id="btn-toggle-logs" class="btn-toggle-logs">Show</button>
+      </div>
+      <div id="log-panel" class="log-panel hidden">
+        <div id="log-output" class="log-output"></div>
+        <div class="log-toolbar">
+          <button id="btn-log-clear" class="btn-log-clear">Clear</button>
+          <label class="log-autoscroll-label">
+            <input type="checkbox" id="log-autoscroll" checked />
+            Auto-scroll
+          </label>
+        </div>
+      </div>
+    </section>
   </div><!-- #sheet-body -->
 
 </div><!-- #sidebar -->
