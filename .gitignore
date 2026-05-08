@@ -18,3 +18,4 @@ devices/*.plist
 
 # macOS
 .DS_Store
+secret.json

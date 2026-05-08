@@ -524,6 +524,13 @@ function renderDeviceList() {
     nameEl.textContent = device.name || device.id;
     nameEl.addEventListener("click", () => toggleDeviceHistory(device, header));
 
+    if (device.source === "google") {
+      const badge = document.createElement("span");
+      badge.className = "source-badge source-google";
+      badge.textContent = "Google";
+      nameEl.appendChild(badge);
+    }
+
     const editBtn = document.createElement("button");
     editBtn.className = "device-edit-btn";
     editBtn.title = "Rename device";
@@ -675,12 +682,24 @@ async function updatePollDetails() {
     : s.poll_status === "error" ? "error"
     : s.account_configured ? "idle" : "warn";
 
+  const googleLabel = s.google_poll_status === "polling" ? "Polling…"
+    : s.google_poll_status === "error" ? "Error"
+    : s.google_configured ? "Idle" : "Not configured";
+  const googleClass = s.google_poll_status === "polling" ? "polling"
+    : s.google_poll_status === "error" ? "error"
+    : s.google_configured ? "idle" : "warn";
+
   const el = document.getElementById("poll-details-content");
   el.innerHTML = `
+    <div class="pd-section-title">Apple FindMy</div>
     <div class="pd-row"><span>Status</span><strong class="status-text ${statusClass}">${statusLabel}</strong></div>
     <div class="pd-row"><span>Last poll</span><strong>${s.last_poll ? fmtDatetime(Math.floor(s.last_poll)) : "Never"}</strong></div>
     <div class="pd-row"><span>Next poll</span><strong>${s.poll_status === "polling" ? "Now" : secsUntilNext !== null ? fmtCountdown(secsUntilNext) : "—"}</strong></div>
     <div class="pd-row"><span>Interval</span><strong>${s.poll_interval_seconds / 60} min</strong></div>
+    <div class="pd-section-title">Google FindMy</div>
+    <div class="pd-row"><span>Status</span><strong class="status-text ${googleClass}">${googleLabel}</strong></div>
+    <div class="pd-row"><span>Last poll</span><strong>${s.google_last_poll ? fmtDatetime(Math.floor(s.google_last_poll)) : "Never"}</strong></div>
+    <div class="pd-section-title">Overall</div>
     <div class="pd-row"><span>Reports stored</span><strong>${s.total_reports.toLocaleString()}</strong></div>
   `;
 }
@@ -772,7 +791,34 @@ document.getElementById("btn-poll").addEventListener("click", async () => {
     }
   } finally {
     btn.disabled = false;
-    btn.textContent = "Poll Now";
+    btn.textContent = "Poll Apple";
+    await updateStats();
+  }
+});
+
+document.getElementById("btn-poll-google").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-poll-google");
+  btn.disabled = true;
+  btn.textContent = "Polling…";
+
+  try {
+    const resp = await fetch("/api/poll?source=google", { method: "POST" });
+    const result = await resp.json();
+    if (!result.ok) {
+      alert("Google poll failed: " + (result.error || "Unknown error"));
+    } else {
+      const msg = result.new_reports != null
+        ? `Google poll complete: ${result.new_reports} new report(s).`
+        : result.message || "Done.";
+      if (result.warnings?.length) {
+        console.warn("Google poll warnings:", result.warnings);
+      }
+      await loadDevices();
+      await renderAll();
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Poll Google";
     await updateStats();
   }
 });

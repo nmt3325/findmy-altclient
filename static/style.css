@@ -159,6 +159,35 @@ body {
 .btn-secondary:hover  { background: #e8f0fe; }
 .btn-secondary:disabled { opacity: .5; cursor: not-allowed; }
 
+.poll-btn-row {
+  display: flex;
+  gap: 6px;
+}
+.poll-btn-row .btn-secondary {
+  flex: 1;
+}
+.btn-google {
+  color: #34a853;
+  border-color: #c6e8cd;
+}
+.btn-google:hover { background: #e6f4ea; }
+
+/* Source badges on device cards */
+.source-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+}
+.source-google {
+  background: #e6f4ea;
+  color: #137333;
+}
+
 /* ─── Device list ───────────────────────────────────────────────────────── */
 #device-list { display: flex; flex-direction: column; gap: 4px; }
 
@@ -406,6 +435,17 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.pd-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: #9aa0a6;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 0 2px;
+  border-bottom: 1px solid #e8eaed;
+  margin-bottom: 2px;
 }
 
 .pd-row {

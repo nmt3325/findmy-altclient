@@ -36,6 +36,9 @@ ANISETTE_LIBS_PATH = DATA_DIR / "ani_libs.bin"
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL", "900"))  # default 15 min
 ANISETTE_SERVER = os.environ.get("ANISETTE_SERVER", None)
 
+# Google FindMy (GoogleFindMyTools integration)
+GOOGLE_LOCATION_TIMEOUT = int(os.environ.get("GOOGLE_LOCATION_TIMEOUT", "30"))
+
 DEVICE_COLORS = [
     "#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
     "#1abc9c", "#e67e22", "#e91e63", "#00bcd4", "#8bc34a",
@@ -47,6 +50,10 @@ CORS(app)
 _poll_lock = threading.Lock()
 _last_poll_time: float = 0.0
 _poll_status: str = "idle"
+
+_google_poll_lock = threading.Lock()
+_last_google_poll_time: float = 0.0
+_google_poll_status: str = "idle"
 
 
 # ---------------------------------------------------------------------------
@@ -61,11 +68,12 @@ def init_db() -> None:
                 id          TEXT PRIMARY KEY,
                 name        TEXT,
                 model       TEXT,
-                file_path   TEXT NOT NULL,
+                file_path   TEXT NOT NULL DEFAULT '',
                 file_type   TEXT NOT NULL DEFAULT 'json',
                 color       TEXT NOT NULL DEFAULT '#3498db',
                 visible     INTEGER NOT NULL DEFAULT 1,
-                last_polled INTEGER
+                last_polled INTEGER,
+                source      TEXT NOT NULL DEFAULT 'apple'
             );
 
             CREATE TABLE IF NOT EXISTS locations (
@@ -84,6 +92,11 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_locations_device_ts
                 ON locations (device_id, timestamp);
         """)
+        # Migrate existing DBs that lack the source column
+        try:
+            conn.execute("ALTER TABLE devices ADD COLUMN source TEXT NOT NULL DEFAULT 'apple'")
+        except Exception:
+            pass  # column already exists
 
 
 @contextmanager
@@ -140,8 +153,8 @@ def _load_devices_from_disk() -> list[dict[str, Any]]:
 
         with get_db() as conn:
             conn.execute(
-                """INSERT OR IGNORE INTO devices (id, name, model, file_path, file_type, color)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT OR IGNORE INTO devices (id, name, model, file_path, file_type, color, source)
+                   VALUES (?, ?, ?, ?, ?, ?, 'apple')""",
                 (device_id, name or device_id, model, rel_path, file_type, color),
             )
         found.append({"id": device_id, "path": str(path), "type": file_type})
@@ -266,8 +279,101 @@ def _do_poll() -> dict[str, Any]:
     return {"ok": True, "new_reports": new_count}
 
 
+# ---------------------------------------------------------------------------
+# Google FindMy polling
+# ---------------------------------------------------------------------------
+
+def _register_google_devices_in_db(devices: list[tuple[str, str]]) -> None:
+    """Ensure Google FindMy devices are registered in the DB."""
+    with get_db() as conn:
+        color_idx = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+
+    for device_name, canonic_id in devices:
+        device_id = f"google_{canonic_id}"
+        color = DEVICE_COLORS[color_idx % len(DEVICE_COLORS)]
+        with get_db() as conn:
+            existing = conn.execute("SELECT id FROM devices WHERE id = ?", (device_id,)).fetchone()
+            if not existing:
+                conn.execute(
+                    """INSERT INTO devices (id, name, model, file_path, file_type, color, source)
+                       VALUES (?, ?, 'Google FindMy', '', 'google', ?, 'google')""",
+                    (device_id, device_name, color),
+                )
+                logger.info("Registered Google device: %s (%s)", device_name, device_id)
+                color_idx += 1
+
+
+def _do_google_poll() -> dict[str, Any]:
+    global _last_google_poll_time, _google_poll_status
+
+    import google_poll
+
+    if not google_poll.is_available():
+        msg = "Google FindMy not configured (secret.json or google_findmy_tools/ missing)"
+        logger.debug(msg)
+        return {"ok": False, "error": msg}
+
+    ok, err = google_poll.setup()
+    if not ok:
+        _google_poll_status = "error"
+        logger.error("Google setup failed: %s", err)
+        return {"ok": False, "error": err}
+
+    _google_poll_status = "polling"
+
+    try:
+        devices = google_poll.list_devices()
+    except Exception as e:
+        _google_poll_status = "error"
+        logger.error("Google device list failed: %s", e)
+        return {"ok": False, "error": f"Failed to list Google devices: {e}"}
+
+    if not devices:
+        _google_poll_status = "idle"
+        return {"ok": True, "message": "No Google FindMy devices found.", "new_reports": 0}
+
+    _register_google_devices_in_db(devices)
+
+    new_count = 0
+    errors = []
+    for device_name, canonic_id in devices:
+        device_id = f"google_{canonic_id}"
+        try:
+            locations = google_poll.fetch_device_location(
+                canonic_id, device_name, timeout=GOOGLE_LOCATION_TIMEOUT
+            )
+            for lat, lon, ts, acc in locations:
+                with get_db() as conn:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO locations
+                           (device_id, timestamp, latitude, longitude, accuracy)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (device_id, ts, lat, lon, acc),
+                    )
+                new_count += 1
+            with get_db() as conn:
+                conn.execute(
+                    "UPDATE devices SET last_polled = ? WHERE id = ?",
+                    (int(time.time()), device_id),
+                )
+        except TimeoutError as e:
+            logger.warning("Google location timeout for %s: %s", device_name, e)
+            errors.append(str(e))
+        except Exception as e:
+            logger.error("Google location error for %s: %s", device_name, e)
+            errors.append(f"{device_name}: {e}")
+
+    _last_google_poll_time = time.time()
+    _google_poll_status = "idle"
+    logger.info("Google poll complete. %d new reports stored.", new_count)
+    result: dict[str, Any] = {"ok": True, "new_reports": new_count}
+    if errors:
+        result["warnings"] = errors
+    return result
+
+
 def _background_poller() -> None:
-    """Continuously polls FindMy in the background."""
+    """Continuously polls FindMy (Apple + Google) in the background."""
     while True:
         time.sleep(60)  # wait 1 min before first poll to allow server startup
         if _poll_lock.acquire(blocking=False):
@@ -275,6 +381,11 @@ def _background_poller() -> None:
                 _do_poll()
             finally:
                 _poll_lock.release()
+        if _google_poll_lock.acquire(blocking=False):
+            try:
+                _do_google_poll()
+            finally:
+                _google_poll_lock.release()
         time.sleep(POLL_INTERVAL_SECONDS - 60)
 
 
@@ -363,6 +474,17 @@ def api_get_locations():
 
 @app.route("/api/poll", methods=["POST"])
 def api_poll():
+    source = request.args.get("source", "apple")
+
+    if source == "google":
+        if not _google_poll_lock.acquire(blocking=False):
+            return jsonify({"ok": False, "error": "Google poll already in progress"}), 429
+        try:
+            result = _do_google_poll()
+            return jsonify(result)
+        finally:
+            _google_poll_lock.release()
+
     if not _poll_lock.acquire(blocking=False):
         return jsonify({"ok": False, "error": "Poll already in progress"}), 429
     try:
@@ -374,6 +496,8 @@ def api_poll():
 
 @app.route("/api/status", methods=["GET"])
 def api_status():
+    import google_poll as gp
+
     with get_db() as conn:
         device_count = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
         report_count = conn.execute("SELECT COUNT(*) FROM locations").fetchone()[0]
@@ -389,6 +513,9 @@ def api_status():
         "poll_status": _poll_status,
         "poll_interval_seconds": POLL_INTERVAL_SECONDS,
         "account_configured": ACCOUNT_PATH.exists(),
+        "google_configured": gp.is_available(),
+        "google_last_poll": _last_google_poll_time,
+        "google_poll_status": _google_poll_status,
     })
 
 
