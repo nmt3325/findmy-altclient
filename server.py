@@ -173,6 +173,27 @@ def _load_devices_from_disk() -> list[dict[str, Any]]:
 
             # macless-haystack exports a JSON array of AccessoryDTO objects
             if isinstance(data, list):
+                # Google FindHub pseudo-rolling: [{index, eik, eid}, ...]
+                if (data and isinstance(data[0], dict)
+                        and "eik" in data[0] and "eid" in data[0] and "index" in data[0]
+                        and "privateKey" not in data[0]):
+                    device_id = "findhub_" + data[0]["eik"][:12]
+                    if device_id not in existing_ids:
+                        color = DEVICE_COLORS[color_idx % len(DEVICE_COLORS)]
+                        color_idx += 1
+                        name = path.stem
+                        with get_db() as conn:
+                            conn.execute(
+                                """INSERT OR IGNORE INTO devices
+                                   (id, name, model, file_path, file_type, color, source)
+                                   VALUES (?, ?, 'Google FindHub', ?, 'findhub', ?, 'google_findhub')""",
+                                (device_id, name, rel_path, color),
+                            )
+                        found.append({"id": device_id, "path": str(path), "type": "findhub"})
+                        logger.info("Registered FindHub device: %s (%s)", name, device_id)
+                        existing_ids.add(device_id)
+                    continue
+
                 for mh_dev in data:
                     if not isinstance(mh_dev, dict) or "privateKey" not in mh_dev:
                         continue
@@ -419,25 +440,86 @@ def _do_google_poll() -> dict[str, Any]:
     _google_poll_status = "polling"
 
     try:
-        devices = google_poll.list_devices()
+        devices, raw_device_list = google_poll.list_devices_full()
     except Exception as e:
         _google_poll_status = "error"
         logger.error("Google device list failed: %s", e)
         return {"ok": False, "error": f"Failed to list Google devices: {e}"}
 
-    if not devices:
-        _google_poll_status = "idle"
-        return {"ok": True, "message": "No Google FindMy devices found.", "new_reports": 0}
-
-    _register_google_devices_in_db(devices)
-
     new_count = 0
     errors = []
-    for device_name, canonic_id in devices:
-        device_id = f"google_{canonic_id}"
+
+    # --- Standard Google FindMy devices ---
+    if devices:
+        _register_google_devices_in_db(devices)
+        for device_name, canonic_id in devices:
+            device_id = f"google_{canonic_id}"
+            try:
+                locations = google_poll.fetch_device_location(
+                    canonic_id, device_name, timeout=GOOGLE_LOCATION_TIMEOUT
+                )
+                for lat, lon, ts, acc in locations:
+                    with get_db() as conn:
+                        conn.execute(
+                            """INSERT OR IGNORE INTO locations
+                               (device_id, timestamp, latitude, longitude, accuracy)
+                               VALUES (?, ?, ?, ?, ?)""",
+                            (device_id, ts, lat, lon, acc),
+                        )
+                    new_count += 1
+                with get_db() as conn:
+                    conn.execute(
+                        "UPDATE devices SET last_polled = ? WHERE id = ?",
+                        (int(time.time()), device_id),
+                    )
+            except TimeoutError as e:
+                logger.warning("Google location timeout for %s: %s", device_name, e)
+                errors.append(str(e))
+            except Exception as e:
+                logger.error("Google location error for %s: %s", device_name, e)
+                errors.append(f"{device_name}: {e}")
+    else:
+        logger.info("No standard Google FindMy devices found.")
+
+    # --- Google FindHub pseudo-rolling devices ---
+    with get_db() as conn:
+        findhub_rows = conn.execute(
+            "SELECT id, name, file_path FROM devices WHERE source = 'google_findhub'"
+        ).fetchall()
+
+    for row in findhub_rows:
+        device_id = row["id"]
+        name = row["name"]
+        file_path = BASE_DIR / row["file_path"]
+
+        if not file_path.exists():
+            logger.warning("FindHub device file not found: %s", file_path)
+            continue
+
         try:
-            locations = google_poll.fetch_device_location(
-                canonic_id, device_name, timeout=GOOGLE_LOCATION_TIMEOUT
+            eik_eid_pairs = google_poll.load_findhub_keys(str(file_path))
+        except Exception as e:
+            logger.error("Failed to load FindHub keys for %s: %s", name, e)
+            errors.append(f"{name}: {e}")
+            continue
+
+        # Resolve canonical ID (cached after first successful match)
+        canonic_id = google_poll._findhub_canonic_id_cache.get(row["file_path"])
+        if canonic_id is None:
+            canonic_id = google_poll.find_findhub_canonical_id(eik_eid_pairs, raw_device_list)
+            if canonic_id is None:
+                logger.warning(
+                    "FindHub device '%s' not found in Google account. "
+                    "Register it with CreateBleDevice first.", name
+                )
+                errors.append(f"{name}: not found in Google account")
+                continue
+            google_poll._findhub_canonic_id_cache[row["file_path"]] = canonic_id
+            logger.info("Resolved canonical ID for FindHub device '%s': %s", name, canonic_id)
+
+        try:
+            locations = google_poll.fetch_findhub_device_location(
+                canonic_id, name, eik_eid_pairs, timeout=GOOGLE_LOCATION_TIMEOUT
             )
             for lat, lon, ts, acc in locations:
                 with get_db() as conn:
@@ -454,11 +536,11 @@ def _do_google_poll() -> dict[str, Any]:
                     (int(time.time()), device_id),
                 )
         except TimeoutError as e:
-            logger.warning("Google location timeout for %s: %s", device_name, e)
+            logger.warning("FindHub location timeout for %s: %s", name, e)
             errors.append(str(e))
         except Exception as e:
-            logger.error("Google location error for %s: %s", device_name, e)
-            errors.append(f"{device_name}: {e}")
+            logger.error("FindHub location error for %s: %s", name, e)
+            errors.append(f"{name}: {e}")
 
     _last_google_poll_time = time.time()
     _google_poll_status = "idle"

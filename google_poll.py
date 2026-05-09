@@ -51,10 +51,10 @@ def setup() -> tuple[bool, str]:
     return True, ""
 
 
-def list_devices() -> list[tuple[str, str]]:
+def list_devices_full() -> tuple[list[tuple[str, str]], Any]:
     """
     List Google FindMy devices from Nova API.
-    Returns list of (device_name, canonic_id).
+    Returns ([(device_name, canonic_id), ...], raw DevicesList protobuf).
     """
     from NovaApi.ListDevices.nbe_list_devices import request_device_list
     from ProtoDecoders.decoder import parse_device_list_protobuf, get_canonic_ids
@@ -68,7 +68,193 @@ def list_devices() -> list[tuple[str, str]]:
     except Exception as e:
         logger.debug("refresh_custom_trackers skipped: %s", e)
 
-    return get_canonic_ids(device_list)
+    return get_canonic_ids(device_list), device_list
+
+
+def list_devices() -> list[tuple[str, str]]:
+    """
+    List Google FindMy devices from Nova API.
+    Returns list of (device_name, canonic_id).
+    """
+    devices, _ = list_devices_full()
+    return devices
+
+
+# ---------------------------------------------------------------------------
+# Google FindHub pseudo-rolling device support
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+_findhub_canonic_id_cache: dict[str, str] = {}  # rel_path -> canonic_id
+
+
+def load_findhub_keys(path: str) -> list[dict]:
+    """
+    Load EIK/EID pairs from a FindHub pseudo-rolling device file.
+    Returns list of {index, eik (bytes), eid (bytes)}.
+    """
+    with open(path) as f:
+        data = _json.load(f)
+    entries = []
+    for item in data:
+        try:
+            entries.append({
+                "index": item["index"],
+                "eik": bytes.fromhex(item["eik"]),
+                "eid": bytes.fromhex(item["eid"]),
+            })
+        except Exception:
+            pass
+    return entries
+
+
+def find_findhub_canonical_id(eik_eid_pairs: list[dict], device_list: Any) -> str | None:
+    """
+    Find a canonical ID by comparing known EIKs against MCU devices in the Nova API list.
+    Returns the canonical ID string, or None if not found.
+    """
+    from NovaApi.ExecuteAction.LocateTracker.decrypt_locations import retrieve_identity_key, is_mcu_tracker
+
+    known_eiks = {pair["eik"] for pair in eik_eid_pairs}
+
+    for device in device_list.deviceMetadata:
+        if not is_mcu_tracker(device.information.deviceRegistration):
+            continue
+        try:
+            identity_key = retrieve_identity_key(device.information.deviceRegistration)
+        except Exception as e:
+            logger.debug("Identity key retrieval failed for a device during findhub matching: %s", e)
+            continue
+        if identity_key in known_eiks:
+            canonic_ids = device.identifierInformation.canonicIds.canonicId
+            if canonic_ids:
+                return canonic_ids[0].id
+    return None
+
+
+def _try_decrypt_findhub_loc(
+    identity_key: bytes,
+    enc_loc: bytes,
+    pub_key: bytes,
+) -> bytes | None:
+    """Try AES-GCM (own report) or ECDH-EAX decryption with offset=0 (MCU-style)."""
+    import hashlib
+    from FMDNCrypto.foreign_tracker_cryptor import decrypt
+    from KeyBackup.cloud_key_decryptor import decrypt_aes_gcm
+    try:
+        if pub_key == b"":
+            return decrypt_aes_gcm(hashlib.sha256(identity_key).digest(), enc_loc)
+        return decrypt(identity_key, enc_loc, pub_key, 0)
+    except Exception:
+        return None
+
+
+def _extract_locations_findhub(
+    device_update: Any,
+    eik_eid_pairs: list[dict],
+) -> list[tuple[float, float, int, float | None]]:
+    """
+    Decrypt locations from an FCM DeviceUpdate by trying each known EIK in turn.
+    Each (EIK, EID) pair is independent (pseudo-rolling), so we brute-try until
+    AES-EAX authentication succeeds.
+    """
+    from ProtoDecoders import DeviceUpdate_pb2, Common_pb2
+
+    reports = (
+        device_update.deviceMetadata.information
+        .locationInformation.reports.recentLocationAndNetworkLocations
+    )
+
+    locs = list(reports.networkLocations)
+    times = list(reports.networkLocationTimestamps)
+    if reports.HasField("recentLocation"):
+        locs.append(reports.recentLocation)
+        times.append(reports.recentLocationTimestamp)
+
+    results: list[tuple[float, float, int, float | None]] = []
+    for loc, t in zip(locs, times):
+        try:
+            if loc.status == Common_pb2.Status.SEMANTIC:
+                continue
+
+            enc_loc = loc.geoLocation.encryptedReport.encryptedLocation
+            pub_key = loc.geoLocation.encryptedReport.publicKeyRandom
+
+            dec_bytes = None
+            for pair in eik_eid_pairs:
+                dec_bytes = _try_decrypt_findhub_loc(pair["eik"], enc_loc, pub_key)
+                if dec_bytes is not None:
+                    break
+
+            if dec_bytes is None:
+                logger.warning("Could not decrypt FindHub location entry with any known EIK")
+                continue
+
+            proto_loc = DeviceUpdate_pb2.Location()
+            proto_loc.ParseFromString(dec_bytes)
+
+            lat = proto_loc.latitude / 1e7
+            lon = proto_loc.longitude / 1e7
+            ts = int(t.seconds)
+            acc = loc.geoLocation.accuracy or None
+
+            if -90 <= lat <= 90 and -180 <= lon <= 180 and ts > 0:
+                results.append((lat, lon, ts, acc))
+        except Exception as e:
+            logger.warning("Skipping FindHub location entry: %s", e)
+
+    return results
+
+
+def fetch_findhub_device_location(
+    canonic_id: str,
+    name: str,
+    eik_eid_pairs: list[dict],
+    timeout: int = 30,
+) -> list[tuple[float, float, int, float | None]]:
+    """
+    Request the current location for a FindHub pseudo-rolling device via FCM.
+    Decrypts using the pre-computed EIK/EID pairs (tries each in turn).
+    """
+    from Auth.fcm_receiver import FcmReceiver
+    from NovaApi.ExecuteAction.LocateTracker.location_request import create_location_request
+    from NovaApi.nova_request import nova_request
+    from NovaApi.scopes import NOVA_ACTION_API_SCOPE
+    from NovaApi.util import generate_random_uuid
+    from ProtoDecoders.decoder import parse_device_update_protobuf
+
+    result: list[Any] = [None]
+    request_uuid = generate_random_uuid()
+
+    def _on_fcm(hex_string: str) -> None:
+        try:
+            update = parse_device_update_protobuf(hex_string)
+            if update.fcmMetadata.requestUuid == request_uuid:
+                result[0] = update
+        except Exception as e:
+            logger.debug("FCM parse skip: %s", e)
+
+    receiver = FcmReceiver()
+    fcm_token = receiver.register_for_location_updates(_on_fcm)
+
+    logger.info("[FindHub] Requesting location for %s...", name)
+    hex_payload = create_location_request(canonic_id, fcm_token, request_uuid)
+    nova_request(NOVA_ACTION_API_SCOPE, hex_payload)
+
+    deadline = time.time() + timeout
+    while result[0] is None and time.time() < deadline:
+        time.sleep(0.1)
+
+    try:
+        receiver.location_update_callbacks.remove(_on_fcm)
+    except ValueError:
+        pass
+
+    if result[0] is None:
+        raise TimeoutError(f"No FCM response for FindHub device '{name}' within {timeout}s")
+
+    return _extract_locations_findhub(result[0], eik_eid_pairs)
 
 
 def _extract_locations(device_update: Any) -> list[tuple[float, float, int, float | None]]:
