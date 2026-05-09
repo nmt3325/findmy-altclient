@@ -4,3 +4,4 @@ https://deepwiki.com/dchristl/macless-haystack
 https://deepwiki.com/eonboe1/GoogleFindMyTools
 に質問してfindmy.pyの詳細は確認してください。
 
+notebooklm mcpを使用してgoogle findmy networkについての仕様は確認してください。

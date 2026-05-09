@@ -149,8 +149,11 @@ def _load_devices_from_disk() -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
 
     with get_db() as conn:
-        existing = {
+        existing_paths = {
             row["file_path"] for row in conn.execute("SELECT file_path FROM devices").fetchall()
+        }
+        existing_ids = {
+            row["id"] for row in conn.execute("SELECT id FROM devices").fetchall()
         }
         color_idx = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
 
@@ -158,33 +161,71 @@ def _load_devices_from_disk() -> list[dict[str, Any]]:
         if path.suffix not in (".json", ".plist"):
             continue
         rel_path = str(path.relative_to(BASE_DIR))
-        if rel_path in existing:
-            continue
 
         file_type = "plist" if path.suffix == ".plist" else "json"
-        device_id = path.stem
-        color = DEVICE_COLORS[color_idx % len(DEVICE_COLORS)]
-        color_idx += 1
 
-        # Try to read name/model from JSON files
-        name, model = None, None
         if file_type == "json":
             try:
                 with open(path) as f:
                     data = json.load(f)
-                name = data.get("name") or data.get("Name")
-                model = data.get("model") or data.get("productType")
             except Exception:
-                pass
+                continue
 
-        with get_db() as conn:
-            conn.execute(
-                """INSERT OR IGNORE INTO devices (id, name, model, file_path, file_type, color, source)
-                   VALUES (?, ?, ?, ?, ?, ?, 'apple')""",
-                (device_id, name or device_id, model, rel_path, file_type, color),
-            )
-        found.append({"id": device_id, "path": str(path), "type": file_type})
-        logger.info("Registered new device: %s (%s)", device_id, file_type)
+            # macless-haystack exports a JSON array of AccessoryDTO objects
+            if isinstance(data, list):
+                for mh_dev in data:
+                    if not isinstance(mh_dev, dict) or "privateKey" not in mh_dev:
+                        continue
+                    mh_int_id = mh_dev.get("id")
+                    if mh_int_id is None:
+                        continue
+                    device_id = f"mh_{mh_int_id}"
+                    if device_id in existing_ids:
+                        continue
+                    color = DEVICE_COLORS[color_idx % len(DEVICE_COLORS)]
+                    color_idx += 1
+                    name = mh_dev.get("name") or device_id
+                    with get_db() as conn:
+                        conn.execute(
+                            """INSERT OR IGNORE INTO devices (id, name, model, file_path, file_type, color, source)
+                               VALUES (?, ?, 'macless-haystack', ?, 'macless_haystack', ?, 'apple')""",
+                            (device_id, name, rel_path, color),
+                        )
+                    found.append({"id": device_id, "path": str(path), "type": "macless_haystack"})
+                    logger.info("Registered macless-haystack device: %s (%s)", name, device_id)
+                    existing_ids.add(device_id)
+                continue
+
+            if rel_path in existing_paths:
+                continue
+
+            device_id = path.stem
+            color = DEVICE_COLORS[color_idx % len(DEVICE_COLORS)]
+            color_idx += 1
+            name = data.get("name") or data.get("Name")
+            model = data.get("model") or data.get("productType")
+            with get_db() as conn:
+                conn.execute(
+                    """INSERT OR IGNORE INTO devices (id, name, model, file_path, file_type, color, source)
+                       VALUES (?, ?, ?, ?, ?, ?, 'apple')""",
+                    (device_id, name or device_id, model, rel_path, file_type, color),
+                )
+            found.append({"id": device_id, "path": str(path), "type": file_type})
+            logger.info("Registered new device: %s (%s)", device_id, file_type)
+        else:
+            if rel_path in existing_paths:
+                continue
+            device_id = path.stem
+            color = DEVICE_COLORS[color_idx % len(DEVICE_COLORS)]
+            color_idx += 1
+            with get_db() as conn:
+                conn.execute(
+                    """INSERT OR IGNORE INTO devices (id, name, model, file_path, file_type, color, source)
+                       VALUES (?, ?, ?, ?, ?, ?, 'apple')""",
+                    (device_id, device_id, None, rel_path, file_type, color),
+                )
+            found.append({"id": device_id, "path": str(path), "type": file_type})
+            logger.info("Registered new device: %s (%s)", device_id, file_type)
 
     return found
 
@@ -192,6 +233,34 @@ def _load_devices_from_disk() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # FindMy.py polling
 # ---------------------------------------------------------------------------
+
+def _load_macless_haystack_accessory(path: Path, device_db_id: str) -> Any:
+    """Load a FixedRollingKeyPairAccessory from a macless-haystack array JSON file."""
+    import base64
+    try:
+        from findmy import FixedRollingKeyPairAccessory
+    except ImportError:
+        raise RuntimeError("findmy package not installed. Run: pip install findmy")
+
+    mh_int_id = int(device_db_id.removeprefix("mh_"))
+    with open(path) as f:
+        devices = json.load(f)
+
+    mh_dev = next((d for d in devices if d.get("id") == mh_int_id), None)
+    if mh_dev is None:
+        raise ValueError(f"Device id={mh_int_id} not found in {path}")
+
+    private_keys = [base64.b64decode(mh_dev["privateKey"]).hex()]
+    for k in mh_dev.get("additionalKeys") or []:
+        private_keys.append(base64.b64decode(k).hex())
+
+    return FixedRollingKeyPairAccessory.from_json(json.dumps({
+        "type": "custom_rolling_key_accessory",
+        "private_keys": private_keys,
+        "name": mh_dev.get("name"),
+        "identifier": str(mh_int_id),
+    }))
+
 
 def _do_poll() -> dict[str, Any]:
     global _last_poll_time, _poll_status
@@ -209,7 +278,7 @@ def _do_poll() -> dict[str, Any]:
     _load_devices_from_disk()
 
     with get_db() as conn:
-        device_rows = conn.execute("SELECT * FROM devices").fetchall()
+        device_rows = conn.execute("SELECT * FROM devices WHERE source = 'apple'").fetchall()
 
     if not device_rows:
         _poll_status = "idle"
@@ -238,6 +307,8 @@ def _do_poll() -> dict[str, Any]:
         try:
             if row["file_type"] == "plist":
                 acc_obj = FindMyAccessory.from_plist(str(path))
+            elif row["file_type"] == "macless_haystack":
+                acc_obj = _load_macless_haystack_accessory(path, row["id"])
             else:
                 acc_obj = FindMyAccessory.from_json(str(path))
             accessories.append(acc_obj)
