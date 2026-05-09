@@ -613,6 +613,14 @@ def api_set_visible(device_id: str):
     return jsonify({"ok": True})
 
 
+@app.route("/api/devices/<device_id>", methods=["DELETE"])
+def api_delete_device(device_id: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM locations WHERE device_id = ?", (device_id,))
+        conn.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/devices/<device_id>/name", methods=["PUT"])
 def api_set_name(device_id: str):
     body = request.get_json(silent=True) or {}

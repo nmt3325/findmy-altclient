@@ -517,6 +517,23 @@ body {
 }
 .device-edit-btn:hover { color: #4285f4; }
 
+/* ─── Device delete button ──────────────────────────────────────────────── */
+.device-delete-btn {
+  background: none;
+  border: none;
+  color: #bdc1c6;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  font-family: inherit;
+  transition: color .15s;
+  opacity: 0;
+}
+.device-name-btn:hover .device-delete-btn { opacity: 1; }
+.device-delete-btn:hover { color: #ea4335; }
+
 .device-name-input {
   font-size: 12px;
   font-weight: 500;

@@ -540,12 +540,37 @@ function renderDeviceList() {
       startNameEdit(device, nameEl, editBtn);
     });
 
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "device-delete-btn";
+    deleteBtn.title = "Delete device";
+    deleteBtn.textContent = "🗑";
+    deleteBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const msg = `「${device.name || device.id}」を削除しますか？\n\nDBから位置履歴ごと削除されます。devices/ フォルダのファイルは残るため、次回ポーリング時に再登録されます。ファイルも不要な場合は手動で削除してください。`;
+      if (!confirm(msg)) return;
+      const resp = await fetch(`/api/devices/${device.id}`, { method: "DELETE" });
+      if (!resp.ok) { alert("削除に失敗しました"); return; }
+      // Remove from local state
+      if (deviceLayers[device.id]) {
+        const { polyline, markers } = deviceLayers[device.id];
+        if (polyline) map.removeLayer(polyline);
+        markers.forEach(m => map.removeLayer(m));
+        delete deviceLayers[device.id];
+      }
+      if (expandedDeviceId === device.id) expandedDeviceId = null;
+      devices = devices.filter(d => d.id !== device.id);
+      renderDeviceList();
+      updateToggleAllLabel();
+      updateStats();
+    });
+
     const arrow = document.createElement("span");
     arrow.className = "device-arrow";
     arrow.textContent = "▶";
 
     nameBtn.appendChild(nameEl);
     nameBtn.appendChild(editBtn);
+    nameBtn.appendChild(deleteBtn);
     nameBtn.appendChild(arrow);
 
     // Toggle switch – stop propagation so it doesn't trigger header click

@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python -c \"import ast; ast.parse\\(open\\('google_poll.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('server.py'\\).read\\(\\)\\); print\\('server.py OK'\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('server.py'\\).read\\(\\)\\); print\\('server.py OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('server.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }
