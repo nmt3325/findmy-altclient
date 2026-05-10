@@ -524,12 +524,16 @@ function renderDeviceList() {
     nameEl.textContent = device.name || device.id;
     nameEl.addEventListener("click", () => toggleDeviceHistory(device, header));
 
-    if (device.source === "google") {
-      const badge = document.createElement("span");
+    const isGoogle = device.source === "google" || device.source === "google_findhub";
+    const badge = document.createElement("span");
+    if (isGoogle) {
       badge.className = "source-badge source-google";
       badge.textContent = "Google";
-      nameEl.appendChild(badge);
+    } else {
+      badge.className = "source-badge source-apple";
+      badge.textContent = "Apple";
     }
+    nameEl.appendChild(badge);
 
     const editBtn = document.createElement("button");
     editBtn.className = "device-edit-btn";
@@ -571,7 +575,6 @@ function renderDeviceList() {
     nameBtn.appendChild(nameEl);
     nameBtn.appendChild(editBtn);
     nameBtn.appendChild(deleteBtn);
-    nameBtn.appendChild(arrow);
 
     // Toggle switch – stop propagation so it doesn't trigger header click
     const toggle = document.createElement("label");
@@ -946,6 +949,47 @@ document.getElementById("btn-toggle-logs").addEventListener("click", toggleLogs)
 document.getElementById("btn-log-clear").addEventListener("click", () => {
   document.getElementById("log-output").innerHTML = "";
 });
+
+// ---------------------------------------------------------------------------
+// Sidebar resize (desktop only)
+// ---------------------------------------------------------------------------
+
+(function initSidebarResize() {
+  const resizer  = document.getElementById("sidebar-resizer");
+  const sidebar  = document.getElementById("sidebar");
+  const MIN_W = 200;
+  const MAX_W = 520;
+
+  const saved = localStorage.getItem("sidebarWidth");
+  if (saved) sidebar.style.width = saved + "px";
+
+  let startX = 0, startW = 0;
+
+  resizer.addEventListener("mousedown", (e) => {
+    if (isMobile()) return;
+    startX = e.clientX;
+    startW = sidebar.getBoundingClientRect().width;
+    resizer.classList.add("dragging");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!resizer.classList.contains("dragging")) return;
+    const newW = Math.min(MAX_W, Math.max(MIN_W, startW + (e.clientX - startX)));
+    sidebar.style.width = newW + "px";
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!resizer.classList.contains("dragging")) return;
+    resizer.classList.remove("dragging");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    localStorage.setItem("sidebarWidth", parseInt(sidebar.style.width, 10));
+    map.invalidateSize();
+  });
+})();
 
 // ---------------------------------------------------------------------------
 // Init

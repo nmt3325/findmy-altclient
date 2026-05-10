@@ -275,12 +275,12 @@ def _load_macless_haystack_accessory(path: Path, device_db_id: str) -> Any:
     for k in mh_dev.get("additionalKeys") or []:
         private_keys.append(base64.b64decode(k).hex())
 
-    return FixedRollingKeyPairAccessory.from_json(json.dumps({
+    return FixedRollingKeyPairAccessory.from_json({
         "type": "custom_rolling_key_accessory",
         "private_keys": private_keys,
         "name": mh_dev.get("name"),
         "identifier": str(mh_int_id),
-    }))
+    })
 
 
 def _do_poll() -> dict[str, Any]:
@@ -449,10 +449,65 @@ def _do_google_poll() -> dict[str, Any]:
     new_count = 0
     errors = []
 
-    # --- Standard Google FindMy devices ---
-    if devices:
-        _register_google_devices_in_db(devices)
-        for device_name, canonic_id in devices:
+    # --- Resolve FindHub canonical IDs first (before registering standard devices) ---
+    # Pseudo-rolling devices register each EID period as a separate BLE device.
+    # We find all matching canonical IDs and consolidate them into a single findhub entry.
+    with get_db() as conn:
+        findhub_rows = conn.execute(
+            "SELECT id, name, file_path FROM devices WHERE source = 'google_findhub'"
+        ).fetchall()
+
+    all_findhub_canonic_ids: set[str] = set()
+    findhub_canonic_ids_map: dict[str, list[str]] = {}  # findhub device_id -> [canonic_ids]
+    findhub_eik_pairs_map: dict[str, list[dict]] = {}   # findhub device_id -> eik_eid_pairs
+
+    for row in findhub_rows:
+        file_path = BASE_DIR / row["file_path"]
+        if not file_path.exists():
+            continue
+        try:
+            eik_eid_pairs = google_poll.load_findhub_keys(str(file_path))
+            findhub_eik_pairs_map[row["id"]] = eik_eid_pairs
+        except Exception as e:
+            logger.error("Failed to load FindHub keys for %s: %s", row["name"], e)
+            continue
+
+        # Use cached result, or run EIK matching against the Nova API device list
+        canonic_ids = google_poll._findhub_canonic_ids_cache.get(row["file_path"])
+        if canonic_ids is None:
+            canonic_ids = google_poll.find_all_findhub_canonical_ids(eik_eid_pairs, raw_device_list)
+            if canonic_ids:
+                google_poll._findhub_canonic_ids_cache[row["file_path"]] = canonic_ids
+                logger.info(
+                    "FindHub '%s': matched %d canonical ID(s)", row["name"], len(canonic_ids)
+                )
+
+        if canonic_ids:
+            all_findhub_canonic_ids.update(canonic_ids)
+            findhub_canonic_ids_map[row["id"]] = canonic_ids
+
+            # Consolidate: migrate existing google_ entries into this findhub device
+            for cid in canonic_ids:
+                google_dev_id = f"google_{cid}"
+                with get_db() as conn:
+                    if conn.execute("SELECT 1 FROM devices WHERE id = ?", (google_dev_id,)).fetchone():
+                        # Move location history (ignore rows that already exist in findhub device)
+                        conn.execute(
+                            """INSERT OR IGNORE INTO locations
+                               (device_id, timestamp, latitude, longitude, confidence, accuracy, status)
+                               SELECT ?, timestamp, latitude, longitude, confidence, accuracy, status
+                               FROM locations WHERE device_id = ?""",
+                            (row["id"], google_dev_id),
+                        )
+                        conn.execute("DELETE FROM locations WHERE device_id = ?", (google_dev_id,))
+                        conn.execute("DELETE FROM devices WHERE id = ?", (google_dev_id,))
+                        logger.info("Consolidated %s → %s", google_dev_id, row["id"])
+
+    # --- Standard Google FindMy devices (excluding those handled by findhub files) ---
+    filtered_devices = [(n, c) for n, c in devices if c not in all_findhub_canonic_ids]
+    if filtered_devices:
+        _register_google_devices_in_db(filtered_devices)
+        for device_name, canonic_id in filtered_devices:
             device_id = f"google_{canonic_id}"
             try:
                 locations = google_poll.fetch_device_location(
@@ -479,47 +534,28 @@ def _do_google_poll() -> dict[str, Any]:
                 logger.error("Google location error for %s: %s", device_name, e)
                 errors.append(f"{device_name}: {e}")
     else:
-        logger.info("No standard Google FindMy devices found.")
+        logger.info("No standard Google FindMy devices to poll.")
 
     # --- Google FindHub pseudo-rolling devices ---
-    with get_db() as conn:
-        findhub_rows = conn.execute(
-            "SELECT id, name, file_path FROM devices WHERE source = 'google_findhub'"
-        ).fetchall()
-
     for row in findhub_rows:
         device_id = row["id"]
         name = row["name"]
-        file_path = BASE_DIR / row["file_path"]
-
-        if not file_path.exists():
-            logger.warning("FindHub device file not found: %s", file_path)
+        eik_eid_pairs = findhub_eik_pairs_map.get(device_id)
+        if not eik_eid_pairs:
             continue
 
-        try:
-            eik_eid_pairs = google_poll.load_findhub_keys(str(file_path))
-        except Exception as e:
-            logger.error("Failed to load FindHub keys for %s: %s", name, e)
-            errors.append(f"{name}: {e}")
+        canonic_ids = findhub_canonic_ids_map.get(device_id, [])
+        if not canonic_ids:
+            logger.warning(
+                "FindHub device '%s': no matching canonical ID found. "
+                "Register it with CreateBleDevice first.", name
+            )
+            errors.append(f"{name}: not found in Google account")
             continue
-
-        # Resolve canonical ID (cached after first successful match)
-        canonic_id = google_poll._findhub_canonic_id_cache.get(row["file_path"])
-        if canonic_id is None:
-            canonic_id = google_poll.find_findhub_canonical_id(eik_eid_pairs, raw_device_list)
-            if canonic_id is None:
-                logger.warning(
-                    "FindHub device '%s' not found in Google account. "
-                    "Register it with CreateBleDevice first.", name
-                )
-                errors.append(f"{name}: not found in Google account")
-                continue
-            google_poll._findhub_canonic_id_cache[row["file_path"]] = canonic_id
-            logger.info("Resolved canonical ID for FindHub device '%s': %s", name, canonic_id)
 
         try:
             locations = google_poll.fetch_findhub_device_location(
-                canonic_id, name, eik_eid_pairs, timeout=GOOGLE_LOCATION_TIMEOUT
+                canonic_ids, name, eik_eid_pairs, timeout=GOOGLE_LOCATION_TIMEOUT
             )
             for lat, lon, ts, acc in locations:
                 with get_db() as conn:
@@ -592,7 +628,7 @@ def api_get_devices():
     _load_devices_from_disk()
     with get_db() as conn:
         rows = conn.execute("""
-            SELECT d.id, d.name, d.model, d.color, d.visible, d.last_polled,
+            SELECT d.id, d.name, d.model, d.color, d.visible, d.last_polled, d.source,
                    l.latitude, l.longitude, l.timestamp as last_ts
             FROM devices d
             LEFT JOIN locations l ON l.id = (

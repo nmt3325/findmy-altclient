@@ -187,6 +187,10 @@ body {
   background: #e6f4ea;
   color: #137333;
 }
+.source-apple {
+  background: #f0f0f5;
+  color: #555;
+}
 
 /* ─── Device list ───────────────────────────────────────────────────────── */
 #device-list { display: flex; flex-direction: column; gap: 4px; }
@@ -346,10 +350,26 @@ body {
 .stat span { color: #9aa0a6; }
 .stat strong { color: #202124; }
 
+/* ─── Sidebar resizer (desktop only) ───────────────────────────────────── */
+#sidebar-resizer {
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1001;
+  transition: background 0.15s;
+}
+#sidebar-resizer:hover,
+#sidebar-resizer.dragging {
+  background: #4285f4;
+}
+
 /* ─── Map ───────────────────────────────────────────────────────────────── */
 #map {
   flex: 1;
   height: 100vh;
+  min-width: 0;
 }
 
 /* ─── Map type control ──────────────────────────────────────────────────── */
@@ -529,9 +549,7 @@ body {
   flex-shrink: 0;
   font-family: inherit;
   transition: color .15s;
-  opacity: 0;
 }
-.device-name-btn:hover .device-delete-btn { opacity: 1; }
 .device-delete-btn:hover { color: #ea4335; }
 
 .device-name-input {
@@ -639,6 +657,7 @@ body {
 
 /* ─── Mobile: Bottom Sheet ──────────────────────────────────────────────── */
 @media (max-width: 600px) {
+  #sidebar-resizer { display: none; }
   body {
     display: block;
     overflow: hidden;
