@@ -166,10 +166,11 @@ function applyFilters() {
       const conf    = r.confidence != null ? String(r.confidence) : "";
       const acc     = r.accuracy   != null ? String(r.accuracy)   : "";
       const stat    = r.status     != null ? String(r.status)     : "";
+      const keyIdx  = r.key_index  != null ? String(r.key_index)  : "";
       const matched = devName.includes(search) || ts.includes(search) ||
                       lat.includes(search)     || lng.includes(search) ||
                       conf.includes(search)    || acc.includes(search) ||
-                      stat.includes(search);
+                      stat.includes(search)    || keyIdx.includes(search);
       if (!matched) return false;
     }
 
@@ -222,7 +223,7 @@ function renderTable() {
   const pageRows = filteredReports.slice(startIdx, startIdx + pageSize);
 
   if (total === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="table-empty">No reports match the current filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="table-empty">No reports match the current filters.</td></tr>';
   } else {
     tbody.innerHTML = "";
     pageRows.forEach((r, i) => {
@@ -244,6 +245,7 @@ function renderTable() {
         <td class="col-conf">${r.confidence != null ? r.confidence : '<span class="null-val">—</span>'}</td>
         <td class="col-acc">${r.accuracy   != null ? r.accuracy.toFixed(1) : '<span class="null-val">—</span>'}</td>
         <td class="col-status">${r.status  != null ? r.status : '<span class="null-val">—</span>'}</td>
+        <td class="col-key">${r.key_index != null ? r.key_index : '<span class="null-val">—</span>'}</td>
         <td class="col-action">
           <a href="https://maps.google.com/?q=${r.latitude},${r.longitude}"
              target="_blank" rel="noopener noreferrer"
@@ -286,7 +288,7 @@ function setSummary(text) {
 
 function exportCSV() {
   const headers = ["#", "Device ID", "Device Name", "Unix Timestamp", "Date/Time",
-                   "Latitude", "Longitude", "Confidence", "Accuracy (m)", "Status"];
+                   "Latitude", "Longitude", "Confidence", "Accuracy (m)", "Status", "Key Index"];
 
   const rows = filteredReports.map((r, i) => {
     const dev = devices[r.device_id];
@@ -301,6 +303,7 @@ function exportCSV() {
       r.confidence != null ? r.confidence : "",
       r.accuracy   != null ? r.accuracy   : "",
       r.status     != null ? r.status     : "",
+      r.key_index  != null ? r.key_index  : "",
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(",");
   });
 

@@ -164,11 +164,12 @@ def _try_decrypt_findhub_loc(
 def _extract_locations_findhub(
     device_update: Any,
     eik_eid_pairs: list[dict],
-) -> list[tuple[float, float, int, float | None]]:
+) -> list[tuple[float, float, int, float | None, int | None]]:
     """
     Decrypt locations from an FCM DeviceUpdate by trying each known EIK in turn.
     Each (EIK, EID) pair is independent (pseudo-rolling), so we brute-try until
     AES-EAX authentication succeeds.
+    Returns list of (latitude, longitude, timestamp, accuracy, key_index).
     """
     from ProtoDecoders import DeviceUpdate_pb2, Common_pb2
 
@@ -183,7 +184,7 @@ def _extract_locations_findhub(
         locs.append(reports.recentLocation)
         times.append(reports.recentLocationTimestamp)
 
-    results: list[tuple[float, float, int, float | None]] = []
+    results: list[tuple[float, float, int, float | None, int | None]] = []
     for loc, t in zip(locs, times):
         try:
             if loc.status == Common_pb2.Status.SEMANTIC:
@@ -193,9 +194,11 @@ def _extract_locations_findhub(
             pub_key = loc.geoLocation.encryptedReport.publicKeyRandom
 
             dec_bytes = None
+            key_index = None
             for pair in eik_eid_pairs:
                 dec_bytes = _try_decrypt_findhub_loc(pair["eik"], enc_loc, pub_key)
                 if dec_bytes is not None:
+                    key_index = pair.get("index")
                     break
 
             if dec_bytes is None:
@@ -211,7 +214,7 @@ def _extract_locations_findhub(
             acc = loc.geoLocation.accuracy or None
 
             if -90 <= lat <= 90 and -180 <= lon <= 180 and ts > 0:
-                results.append((lat, lon, ts, acc))
+                results.append((lat, lon, ts, acc, key_index))
         except Exception as e:
             logger.warning("Skipping FindHub location entry: %s", e)
 
@@ -223,11 +226,12 @@ def fetch_findhub_device_location(
     name: str,
     eik_eid_pairs: list[dict],
     timeout: int = 30,
-) -> list[tuple[float, float, int, float | None]]:
+) -> list[tuple[float, float, int, float | None, int | None]]:
     """
     Request the current location for a FindHub pseudo-rolling device via FCM.
     Tries each canonical ID in sequence (each represents one rolling period).
     Stops at the first successful response. Decrypts by trying all known EIKs.
+    Returns list of (latitude, longitude, timestamp, accuracy, key_index).
     """
     from Auth.fcm_receiver import FcmReceiver
     from NovaApi.ExecuteAction.LocateTracker.location_request import create_location_request
@@ -274,10 +278,10 @@ def fetch_findhub_device_location(
     raise TimeoutError(f"No FCM response for FindHub device '{name}' from any of {len(canonic_ids)} canonical ID(s)")
 
 
-def _extract_locations(device_update: Any) -> list[tuple[float, float, int, float | None]]:
+def _extract_locations(device_update: Any) -> list[tuple[float, float, int, float | None, None]]:
     """
     Decrypt and extract location data from a DeviceUpdate protobuf.
-    Returns list of (latitude, longitude, unix_timestamp, accuracy_meters).
+    Returns list of (latitude, longitude, unix_timestamp, accuracy_meters, None).
     """
     from NovaApi.ExecuteAction.LocateTracker.decrypt_locations import retrieve_identity_key, is_mcu_tracker
     from KeyBackup.cloud_key_decryptor import decrypt_aes_gcm
@@ -305,7 +309,7 @@ def _extract_locations(device_update: Any) -> list[tuple[float, float, int, floa
         locs.append(reports.recentLocation)
         times.append(reports.recentLocationTimestamp)
 
-    results: list[tuple[float, float, int, float | None]] = []
+    results: list[tuple[float, float, int, float | None, None]] = []
     for loc, t in zip(locs, times):
         try:
             if loc.status == Common_pb2.Status.SEMANTIC:
@@ -329,7 +333,7 @@ def _extract_locations(device_update: Any) -> list[tuple[float, float, int, floa
             acc = loc.geoLocation.accuracy or None
 
             if -90 <= lat <= 90 and -180 <= lon <= 180 and ts > 0:
-                results.append((lat, lon, ts, acc))
+                results.append((lat, lon, ts, acc, None))
         except Exception as e:
             logger.warning("Skipping undecryptable location entry: %s", e)
 
@@ -340,11 +344,11 @@ def fetch_device_location(
     canonic_id: str,
     name: str,
     timeout: int = 30,
-) -> list[tuple[float, float, int, float | None]]:
+) -> list[tuple[float, float, int, float | None, None]]:
     """
     Request the current location of a Google FindMy device via FCM.
     Blocks until a response arrives or timeout expires.
-    Returns list of (latitude, longitude, unix_timestamp, accuracy_meters).
+    Returns list of (latitude, longitude, unix_timestamp, accuracy_meters, None).
     """
     from Auth.fcm_receiver import FcmReceiver
     from NovaApi.ExecuteAction.LocateTracker.location_request import create_location_request

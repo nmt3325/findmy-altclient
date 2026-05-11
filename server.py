@@ -111,6 +111,7 @@ def init_db() -> None:
                 confidence  INTEGER,
                 accuracy    REAL,
                 status      INTEGER,
+                key_index   INTEGER,
                 FOREIGN KEY (device_id) REFERENCES devices(id),
                 UNIQUE (device_id, timestamp)
             );
@@ -121,6 +122,11 @@ def init_db() -> None:
         # Migrate existing DBs that lack the source column
         try:
             conn.execute("ALTER TABLE devices ADD COLUMN source TEXT NOT NULL DEFAULT 'apple'")
+        except Exception:
+            pass  # column already exists
+        # Migrate existing DBs that lack the key_index column
+        try:
+            conn.execute("ALTER TABLE locations ADD COLUMN key_index INTEGER")
         except Exception:
             pass  # column already exists
 
@@ -255,8 +261,11 @@ def _load_devices_from_disk() -> list[dict[str, Any]]:
 # FindMy.py polling
 # ---------------------------------------------------------------------------
 
-def _load_macless_haystack_accessory(path: Path, device_db_id: str) -> Any:
-    """Load a FixedRollingKeyPairAccessory from a macless-haystack array JSON file."""
+def _load_macless_haystack_accessory(path: Path, device_db_id: str) -> tuple[Any, dict[bytes, int]]:
+    """
+    Load a FixedRollingKeyPairAccessory from a macless-haystack array JSON file.
+    Returns (accessory, key_bytes_to_index_map).
+    """
     import base64
     try:
         from findmy import FixedRollingKeyPairAccessory
@@ -272,15 +281,21 @@ def _load_macless_haystack_accessory(path: Path, device_db_id: str) -> Any:
         raise ValueError(f"Device id={mh_int_id} not found in {path}")
 
     private_keys = [base64.b64decode(mh_dev["privateKey"]).hex()]
-    for k in mh_dev.get("additionalKeys") or []:
-        private_keys.append(base64.b64decode(k).hex())
+    key_bytes_to_index = {bytes.fromhex(private_keys[0]): 0}
 
-    return FixedRollingKeyPairAccessory.from_json({
+    for idx, k in enumerate(mh_dev.get("additionalKeys") or [], start=1):
+        decoded = base64.b64decode(k).hex()
+        private_keys.append(decoded)
+        key_bytes_to_index[bytes.fromhex(decoded)] = idx
+
+    accessory = FixedRollingKeyPairAccessory.from_json({
         "type": "custom_rolling_key_accessory",
         "private_keys": private_keys,
         "name": mh_dev.get("name"),
         "identifier": str(mh_int_id),
     })
+
+    return accessory, key_bytes_to_index
 
 
 def _do_poll() -> dict[str, Any]:
@@ -319,6 +334,7 @@ def _do_poll() -> dict[str, Any]:
 
     accessories = []
     device_map: dict[Any, str] = {}  # accessory object -> device_id
+    key_index_map: dict[Any, dict[bytes, int]] = {}  # accessory object -> key_bytes_to_index
 
     for row in device_rows:
         path = BASE_DIR / row["file_path"]
@@ -329,7 +345,8 @@ def _do_poll() -> dict[str, Any]:
             if row["file_type"] == "plist":
                 acc_obj = FindMyAccessory.from_plist(str(path))
             elif row["file_type"] == "macless_haystack":
-                acc_obj = _load_macless_haystack_accessory(path, row["id"])
+                acc_obj, key_map = _load_macless_haystack_accessory(path, row["id"])
+                key_index_map[acc_obj] = key_map
             else:
                 acc_obj = FindMyAccessory.from_json(str(path))
             accessories.append(acc_obj)
@@ -355,6 +372,7 @@ def _do_poll() -> dict[str, Any]:
             device_id = device_map.get(acc_obj)
             if not device_id or not reports:
                 continue
+            key_map = key_index_map.get(acc_obj, {})
             for report in reports:
                 try:
                     ts = int(report.timestamp.timestamp())
@@ -363,12 +381,20 @@ def _do_poll() -> dict[str, Any]:
                     conf = getattr(report, "confidence", None)
                     acc_m = getattr(report, "horizontal_accuracy", None)
                     status = getattr(report, "status", None)
+                    key_idx = None
+                    # Try to determine key index from the report's key
+                    try:
+                        if hasattr(report, "key") and hasattr(report.key, "private_key_bytes"):
+                            key_bytes = report.key.private_key_bytes
+                            key_idx = key_map.get(key_bytes)
+                    except Exception:
+                        pass
                     with get_db() as conn:
                         conn.execute(
                             """INSERT OR IGNORE INTO locations
-                               (device_id, timestamp, latitude, longitude, confidence, accuracy, status)
-                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                            (device_id, ts, lat, lon, conf, acc_m, status),
+                               (device_id, timestamp, latitude, longitude, confidence, accuracy, status, key_index)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (device_id, ts, lat, lon, conf, acc_m, status, key_idx),
                         )
                         new_count += 1
                 except Exception as e:
@@ -513,13 +539,13 @@ def _do_google_poll() -> dict[str, Any]:
                 locations = google_poll.fetch_device_location(
                     canonic_id, device_name, timeout=GOOGLE_LOCATION_TIMEOUT
                 )
-                for lat, lon, ts, acc in locations:
+                for lat, lon, ts, acc, key_idx in locations:
                     with get_db() as conn:
                         conn.execute(
                             """INSERT OR IGNORE INTO locations
-                               (device_id, timestamp, latitude, longitude, accuracy)
-                               VALUES (?, ?, ?, ?, ?)""",
-                            (device_id, ts, lat, lon, acc),
+                               (device_id, timestamp, latitude, longitude, accuracy, key_index)
+                               VALUES (?, ?, ?, ?, ?, ?)""",
+                            (device_id, ts, lat, lon, acc, key_idx),
                         )
                     new_count += 1
                 with get_db() as conn:
@@ -557,13 +583,13 @@ def _do_google_poll() -> dict[str, Any]:
             locations = google_poll.fetch_findhub_device_location(
                 canonic_ids, name, eik_eid_pairs, timeout=GOOGLE_LOCATION_TIMEOUT
             )
-            for lat, lon, ts, acc in locations:
+            for lat, lon, ts, acc, key_idx in locations:
                 with get_db() as conn:
                     conn.execute(
                         """INSERT OR IGNORE INTO locations
-                           (device_id, timestamp, latitude, longitude, accuracy)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (device_id, ts, lat, lon, acc),
+                           (device_id, timestamp, latitude, longitude, accuracy, key_index)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (device_id, ts, lat, lon, acc, key_idx),
                     )
                 new_count += 1
             with get_db() as conn:
@@ -674,7 +700,7 @@ def api_get_locations():
     start = request.args.get("start", type=int)
     end = request.args.get("end", type=int)
 
-    query = "SELECT device_id, timestamp, latitude, longitude, confidence, accuracy, status FROM locations WHERE 1=1"
+    query = "SELECT device_id, timestamp, latitude, longitude, confidence, accuracy, status, key_index FROM locations WHERE 1=1"
     params: list[Any] = []
 
     if device_id:
